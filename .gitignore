@@ -205,3 +205,60 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# Image files
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.bmp
+*.gif
+*.svg
+*.webp
+
+# Model weights and outputs
+*.h5         # Keras model files
+*.hdf5       # HDF5 format
+*.pth        # PyTorch model weights
+*.pt         # PyTorch model
+*.ckpt       # Checkpoints (e.g., TensorFlow, PyTorch Lightning)
+*.pb         # TensorFlow protobuf
+*.joblib     # Scikit-learn models
+*.pkl        # Pickle files (can include models)
+*.sav        # Saved model files
+*.onnx       # ONNX format
+
+# TensorBoard logs
+logs/
+runs/
+
+# MLflow artifacts
+mlruns/
+
+# FastAI
+models/
+
+# Hugging Face Transformers cache and models
+.cache/
+transformers_cache/
+datasets_cache/
+*.msgpack
+
+# DVC cache
+.dvc/
+.dvc/cache/
+
+# Weights & Biases
+wandb/
+
+# Comet ML
+comet.log
+comet.cache/
+
+# Weights & Biases
+wandb/
+
+outputs/
+vesivus/
