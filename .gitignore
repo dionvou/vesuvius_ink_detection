@@ -229,6 +229,7 @@ __marimo__/
 *.pkl        # Pickle files (can include models)
 *.sav        # Saved model files
 *.onnx       # ONNX format
+*.pyth
 
 # TensorBoard logs
 logs/
@@ -262,3 +263,4 @@ wandb/
 
 outputs/
 vesivus/
+checkpoints/
