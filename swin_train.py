@@ -45,22 +45,22 @@ import PIL.Image
 PIL.Image.MAX_IMAGE_PIXELS = 933120000
 
 import utils
-import models.timesformer_hug as timesformer_hug
+import models.swin as swin
 
 class CFG:
     # ============== comp exp name =============
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 24
-    in_chans = 16
+    start_idx = 17
+    in_chans = 26
     
     size = 224
     tile_size = 224
     stride = tile_size // 8 
     
     train_batch_size =  10 # 32
-    valid_batch_size = 25
+    valid_batch_size = train_batch_size*2
     
     lr = 1e-4
     num_workers = 8
@@ -71,7 +71,7 @@ class CFG:
     lr = 1e-4
     
     # ============== fold =============
-    segments = ['vals42', 'remaining5'] 
+    segments = ['vals42', 'rect55'] 
     valid_id = 'vals42'
     # ============== fixed =============
     min_lr = 1e-7
@@ -128,7 +128,7 @@ torch.set_float32_matmul_precision('medium')
 
 
 fragment_id = CFG.valid_id
-run_slug=f'TF_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}'
+run_slug=f'SWIN_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}'
 valid_mask_gt = cv2.imread(f"{CFG.segment_path}{fragment_id}/{fragment_id}_inklabels.png", 0)
 
 pred_shape=valid_mask_gt.shape
@@ -141,9 +141,9 @@ print('train_images',train_images[0].shape)
 print("Length of train images:", len(train_images))
 
 valid_xyxys = np.stack(valid_xyxys)
-train_dataset = timesformer_hug.TimesformerDataset(
+train_dataset = swin.TimesformerDataset(
     train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG))
-valid_dataset = timesformer_hug.TimesformerDataset(
+valid_dataset = swin.TimesformerDataset(
     valid_images, CFG, xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG))
 
 train_loader = DataLoader(train_dataset,
@@ -161,10 +161,10 @@ print(f"Valid loader length: {len(valid_loader)}")
 
 wandb_logger = WandbLogger(project="vesivus",name=run_slug)  
 
-model = timesformer_hug.TimesfomerModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger)
+model = swin.SwinModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger)
 wandb_logger.watch(model, log="all", log_freq=100)
 
-# model = timesformer_hug.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['rect11', 'remaining1']_valid=rect11_size=224_lr=0.0001_in_chans=16_epoch=3.ckpt")
+model = swin.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['rect55', 'remaining5']_valid=rect55_size=224_lr=0.0001_in_chans=26_epoch=7.ckpt")
 trainer = pl.Trainer(
     max_epochs=CFG.epochs,
     accelerator="gpu",

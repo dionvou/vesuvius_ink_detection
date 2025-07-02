@@ -42,10 +42,10 @@ def read_image_mask(fragment_id, CFG=None):
         pad1 = (CFG.tile_size - image.shape[1] % CFG.tile_size)
         image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0) 
         
-        # # Resize the image to match the expected size
-        # if (any(sub in fragment_id for sub in ["frag", "rect", "vals4", "remaining"]) or fragment_id in ["20231210132040"]):
-        #     # Resize to half size for these fragments
-        #     image = cv2.resize(image, (image.shape[1]//2,image.shape[0]//2), interpolation = cv2.INTER_AREA)
+        # Resize the image to match the expected size
+        if (any(sub in fragment_id for sub in ["frag", "rect", "vals4", "remaining"]) or fragment_id in ["20231210132040"]):
+            # Resize to half size for these fragments
+            image = cv2.resize(image, (image.shape[1]//2,image.shape[0]//2), interpolation = cv2.INTER_AREA)
        
         image=np.clip(image,0,200)
         images.append(image)
@@ -69,11 +69,11 @@ def read_image_mask(fragment_id, CFG=None):
     mask = mask.astype('float32')
     mask/=255
     
-    # # RESIZE MASKS
-    # if (any(sub in fragment_id for sub in ["frag", "rect", "vals4", "remaining"]) or fragment_id in ["20231210132040"]):
+    # RESIZE MASKS
+    if (any(sub in fragment_id for sub in ["frag", "rect", "vals4", "remaining"]) or fragment_id in ["20231210132040"]):
 
-    #     fragment_mask = cv2.resize(fragment_mask, (fragment_mask.shape[1]//2,fragment_mask.shape[0]//2), interpolation = cv2.INTER_AREA)
-    #     mask = cv2.resize(mask , (mask.shape[1]//2,mask.shape[0]//2), interpolation = cv2.INTER_AREA)
+        fragment_mask = cv2.resize(fragment_mask, (fragment_mask.shape[1]//2,fragment_mask.shape[0]//2), interpolation = cv2.INTER_AREA)
+        mask = cv2.resize(mask , (mask.shape[1]//2,mask.shape[0]//2), interpolation = cv2.INTER_AREA)
     
     return images, mask, fragment_mask
 

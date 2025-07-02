@@ -70,8 +70,8 @@ class CFG:
     lr = 1e-4
     
     # ============== fold =============
-    segments = ['rect55', 'remaining5'] 
-    valid_id = 'rect55'
+    segments = ['rect11', 'remaining1'] 
+    valid_id = 'rect11'
     # ============== fixed =============
     min_lr = 1e-7
     weight_decay = 1e-6

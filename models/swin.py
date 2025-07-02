@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.distributed as dist
 
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoImageProcessor, TimesformerModel
+from transformers import AutoImageProcessor
 import torchvision.transforms as T
 import numpy as np
 import random
@@ -19,6 +19,9 @@ from torch.optim import AdamW
 from warmup_scheduler import GradualWarmupScheduler
 
 import utils
+
+from transformers import SegformerForSemanticSegmentation
+from torchvision.models.video import swin_transformer
 
 
 # Convert to PIL and then to 3 channels
@@ -73,7 +76,7 @@ class TimesformerDataset(Dataset):
                 data = self.transform(image=image, mask=label)
                 image = data['image'].unsqueeze(0)
                 label = data['mask']
-                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//1,self.cfg.size//1)).squeeze(0)
+                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//2,self.cfg.size//2)).squeeze(0)
             
             image = image.permute(1,0,2,3)
             frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
@@ -96,7 +99,7 @@ class TimesformerDataset(Dataset):
                 data = self.transform(image=image, mask=label)
                 image = data['image'].unsqueeze(0)
                 label = data['mask']
-                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//1,self.cfg.size//1)).squeeze(0)
+                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//2,self.cfg.size//2)).squeeze(0)
                 
             image = image.permute(1,0,2,3)
             frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
@@ -109,23 +112,19 @@ class TimesformerDataset(Dataset):
             
             return pixel_values, label
         
-class TransformerDecoder(nn.Module):
-    def __init__(self, embed_dim=768, num_layers=1, num_heads=8, ff_dim=2048):
-        super().__init__()
-        decoder_layer = nn.TransformerEncoderLayer(
-            d_model=embed_dim,
-            nhead=num_heads,
-            dim_feedforward=ff_dim,
-            batch_first=True
-        )
-        self.decoder = nn.TransformerEncoder(decoder_layer, num_layers=num_layers)
+# class TransformerDecoder(nn.Module):
+#     def __init__(self, embed_dim=768, num_layers=1, num_heads=8, ff_dim=2048):
+#         super().__init__()
+#         decoder_layer = nn.TransformerEncoderLayer(
+#             d_model=embed_dim,
+#             nhead=num_heads,
+#             dim_feedforward=ff_dim,
+#             batch_first=True
+#         )
+#         self.decoder = nn.TransformerEncoder(decoder_layer, num_layers=num_layers)
 
-    def forward(self, x):
-        return self.decoder(x)
-    
-from transformers import SegformerForSemanticSegmentation
-from torchvision.models.video import swin_transformer
-
+#     def forward(self, x):
+#         return self.decoder(x)
 
 class Decoder2D(nn.Module):
     def __init__(self, in_channels, num_classes):
@@ -143,9 +142,9 @@ class Decoder2D(nn.Module):
         x = self.conv_out(x)
         return x
     
-class TimesfomerModel(pl.LightningModule):
+class SwinModel(pl.LightningModule):
     def __init__(self, pred_shape, size, lr, scheduler=None,wandb_logger=None):
-        super(TimesfomerModel, self).__init__()
+        super(SwinModel, self).__init__()
 
         self.save_hyperparameters()
         self.mask_pred = np.zeros(self.hparams.pred_shape)
@@ -155,89 +154,24 @@ class TimesfomerModel(pl.LightningModule):
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
 
-        self.backbone = swin_transformer.swin3d_s(weights="KINETICS400_V1")
+        self.backbone = swin_transformer.swin3d_s(weights="KINETICS400_V1") #KINETICS400_IMAGENET22K_V1 
         self.backbone.head = nn.Identity()
         self.decoder = Decoder2D(in_channels=768, num_classes=1)
-        
-        self.backbone = TimesformerModel.from_pretrained("facebook/timesformer-hr-finetuned-k600")
 
-        self.classifier = nn.Sequential(
-            nn.Linear(768, (self.hparams.size//16)**2),  
-        )
-        # self.resnet_to_rgb = nn.Conv2d(1, 3, kernel_size=1)
-        #         # # # Segformer expects 2D input with shape (B, C, H, W)
-        # self.encoder_2d = SegformerForSemanticSegmentation.from_pretrained(
-        #     "nvidia/mit-b0",
-        #     num_labels=1,
-        #     ignore_mismatched_sizes=True,
-        #     num_channels=3
-        # )
+        self.features = None
+        self.hook_handle = self.backbone.norm.register_forward_hook(self._hook_fn)
         
-        # self.upscaler1 = nn.ConvTranspose2d(
-        #     1, 1, kernel_size=(4, 4), stride=2, padding=1)
-        # self.upscaler2 = nn.ConvTranspose2d(
-        #     1, 1, kernel_size=(4, 4), stride=2, padding=1)
-        # self.decoder = TransformerDecoder(embed_dim=768, num_layers=2, num_heads=8)
+    def _hook_fn(self, module, input, output):
+        self.features = output
 
-        # self.upsample_head = nn.Sequential(
-        #     nn.ConvTranspose2d(768, 256, kernel_size=2, stride=2),
-        #     nn.ReLU(inplace=True),
-        #     nn.ConvTranspose2d(256, 64, kernel_size=2, stride=2),
-        #     nn.ReLU(inplace=True),
-        #     nn.Conv2d(64, 1, kernel_size=1)  # Binary mask, use more channels for multi-class
-        # )
-    # def forward(self, x):
-    #     x = x.permute(0,2,1,3,4)
-    #     _ = self.backbone(x)  # runs backbone, sets self.features
-    #     feat = self.features  # (B, T_patch, H_patch, W_patch, C)
-    #     feat = feat.permute(0, 4, 1, 2, 3)  # (B, C, T_patch, H_patch, W_patch)
-    #     feat_2d = feat.mean(dim=2)  # average temporal patches: (B, C, H_patch, W_patch)
-    #     seg_logits = self.decoder(feat_2d)  # (B, num_classes, 224, 224)
-    #     return seg_logits
-    # # def forward(self, x):
-    #     outputs = self.backbone(x, output_hidden_states=True)
-    #     last_hidden_state = outputs.last_hidden_state  # tuple of all hidden layers
-    #     last_hidden_state = last_hidden_state[:,1:,:]
-    #     last_hidden_state = last_hidden_state.reshape(x.shape[0],16,14,14,768)
-    #     feat = last_hidden_state.permute(0,4,1,2,3)  # (B, C, T_patch, H_patch, W_patch)
-    #     feat_2d = feat.mean(dim=2)
-    #     seg_logits = self.decoder(feat_2d)  # (B, num_classes, 224, 224)
-    #     return seg_logits
-    
     def forward(self, x):
-
-        outputs = self.backbone(x, output_hidden_states=True)
-        last_hidden_state = outputs.last_hidden_state  # tuple of all hidden layers
-        cls = last_hidden_state[:,0,:]
-        preds = self.classifier(cls)
-        preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
-        return preds
-    # def forward(self, x):
-    #     """
-    #     x: (B, C, T, H, W)
-    #     """
-
-    #     B, C, T, H, W = x.shape
-
-    #     # Pass through TimeSformer
-    #     outputs = self.backbone(x, output_hidden_states=True)
-    #     tokens = outputs.last_hidden_state  # (B, N+1, 768)
-
-    #     # Remove CLS token if present
-    #     tokens = tokens[:, 1:, :]  # (B, N, 768)
-    #     # tokens= tokens.permute(0, 2, 1).contiguous()  # (B, 768, N)
-    #     # Pass through transformer decoder
-    #     decoded = self.decoder(tokens)  # (B, N, 768)
-
-    #     # Reshape tokens to (B, 768, H_patch, W_patch)
-    #     N = decoded.size(1)
-    #     H_patch = W_patch = int(N ** 0.5)
-    #     decoded = decoded.permute(0, 2, 1).contiguous().view(B, 768, H_patch, W_patch)
-
-    #     # Upsample to 2D map
-    #     seg_map = self.upsample_head(decoded)  # (B, 1, H_out, W_out)
-    #     # print("seg_map",seg_map.shape)
-    #     return seg_map
+        x = x.permute(0,2,1,3,4)
+        _ = self.backbone(x)  # runs backbone, sets self.features
+        feat = self.features  # (B, T_patch, H_patch, W_patch, C)
+        feat = feat.permute(0, 4, 1, 2, 3)  # (B, C, T_patch, H_patch, W_patch)
+        feat_2d = feat.max(dim=2)[0]  # average temporal patches: (B, C, H_patch, W_patch)
+        seg_logits = self.decoder(feat_2d)  # (B, num_classes, 224, 224)
+        return seg_logits
    
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -259,7 +193,7 @@ class TimesfomerModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=1,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=2,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)
