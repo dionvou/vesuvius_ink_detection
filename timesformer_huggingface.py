@@ -15,7 +15,7 @@ import torch.nn as nn
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
-from timesformer_pytorch import TimeSformer
+# from timesformer_pytorch import TimeSformer
 
 import random
 import threading
@@ -115,11 +115,6 @@ class CFG:
         ToTensorV2(transpose_mask=True),
         
     ]
-    pil_transform = T.Compose([
-        T.ToPILImage(),                    # convert (C, H, W) to PIL
-        # T.Resize((tile_size, tile_size)),             # resize
-        T.Grayscale(num_output_channels=3),  # convert to 3 channels
-    ])
 
     rotate = A.Compose([A.Rotate(5,p=1)])
     
@@ -494,21 +489,10 @@ class RegressionPLModel(pl.LightningModule):
         # )
 
 
-        # # Freeze all parameters in the backbone
-        # for param in self.backbone.parameters():
-        #     param.requires_grad = False
-
-        # self.classifier = nn.Sequential(
-        #     nn.Linear(768, 1),  
-        #     nn.Sigmoid()
-        # )
         self.classifier = nn.Sequential(
             nn.Linear(768, (CFG.size//16)**2),  
         )
         
-        # if self.hparams.with_norm:
-        #     self.normalization=nn.BatchNorm3d(num_features=1)
-            
     def forward(self, x):
 
         outputs = self.backbone(x, output_hidden_states=True)

@@ -238,9 +238,6 @@ runs/
 # MLflow artifacts
 mlruns/
 
-# FastAI
-models/
-
 # Hugging Face Transformers cache and models
 .cache/
 transformers_cache/
@@ -264,3 +261,4 @@ wandb/
 outputs/
 vesivus/
 checkpoints/
+train_scrolls/

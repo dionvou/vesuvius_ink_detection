@@ -4,6 +4,19 @@ import cv2
 import numpy as np
 from scipy import ndimage
 from tqdm import tqdm
+import random
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+import torch
+from torch.optim.lr_scheduler import _LRScheduler
+from torch.optim.lr_scheduler import LinearLR
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim import AdamW
+import wandb
+
+# from pytorch_lightning.callbacks import GradualWarmupScheduler
+# from warmup_scheduler import GradualWarmupScheduler
+
 
 
 def read_image_mask(fragment_id, CFG=None):
@@ -29,9 +42,10 @@ def read_image_mask(fragment_id, CFG=None):
         pad1 = (CFG.tile_size - image.shape[1] % CFG.tile_size)
         image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0) 
         
-        # Resize the image to match the expected size
-        if "frag" in fragment_id or fragment_id in ["20231210132040"]:
-            image = cv2.resize(image, (image.shape[1]//2,image.shape[0]//2), interpolation = cv2.INTER_AREA)
+        # # Resize the image to match the expected size
+        # if (any(sub in fragment_id for sub in ["frag", "rect", "vals4", "remaining"]) or fragment_id in ["20231210132040"]):
+        #     # Resize to half size for these fragments
+        #     image = cv2.resize(image, (image.shape[1]//2,image.shape[0]//2), interpolation = cv2.INTER_AREA)
        
         image=np.clip(image,0,200)
         images.append(image)
@@ -55,10 +69,11 @@ def read_image_mask(fragment_id, CFG=None):
     mask = mask.astype('float32')
     mask/=255
     
-    # RESIZE MASKS
-    if "frag" in fragment_id or fragment_id in ["20231210132040"]:
-        fragment_mask = cv2.resize(fragment_mask, (fragment_mask.shape[1]//2,fragment_mask.shape[0]//2), interpolation = cv2.INTER_AREA)
-        mask = cv2.resize(mask , (mask.shape[1]//2,mask.shape[0]//2), interpolation = cv2.INTER_AREA)
+    # # RESIZE MASKS
+    # if (any(sub in fragment_id for sub in ["frag", "rect", "vals4", "remaining"]) or fragment_id in ["20231210132040"]):
+
+    #     fragment_mask = cv2.resize(fragment_mask, (fragment_mask.shape[1]//2,fragment_mask.shape[0]//2), interpolation = cv2.INTER_AREA)
+    #     mask = cv2.resize(mask , (mask.shape[1]//2,mask.shape[0]//2), interpolation = cv2.INTER_AREA)
     
     return images, mask, fragment_mask
 
@@ -70,12 +85,13 @@ def get_train_valid_dataset(CFG=None):
     valid_masks = []
     valid_xyxys = []
     
+    segments = CFG.segments  # List of segment IDs (subdirectory names or file prefixes)
     path = CFG.segment_path  # Path to the directory containing all segments
 
-    # Automatically find fragment IDs (subdirectory names or file prefixes)
-    segments = sorted(os.listdir(path))
-    print(f"Reading {len(segments)} segments")
-    print(segments)
+    # # Automatically find fragment IDs (subdirectory names or file prefixes)
+    # segments = sorted(os.listdir(path))
+    # print(f"Reading {len(segments)} segments")
+    # print(segments)
     
     for fragment_id in segments:
         fragment_path = os.path.join(path, fragment_id)
@@ -115,6 +131,14 @@ def get_train_valid_dataset(CFG=None):
 
     return train_images, train_masks, valid_images, valid_masks, valid_xyxys
 
+
+def get_transforms(data, cfg):
+    if data == 'train':
+        aug = A.Compose(cfg.train_aug_list)
+    elif data == 'valid':
+        aug = A.Compose(cfg.valid_aug_list)
+    return aug
+
 def mae_loss(pred, target, mask):
     """
     pred: (B, C, H, W) — model's reconstructed output
@@ -124,3 +148,24 @@ def mae_loss(pred, target, mask):
     loss = (pred - target) ** 2
     loss = loss * mask  # apply mask to compute loss only on masked areas
     return loss.sum() / mask.sum().clamp(min=1.0)  # prevent divide-by-zero
+    
+    
+def set_seed(seed=None, cudnn_deterministic=True):
+    if seed is None:
+        seed = 42
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = cudnn_deterministic
+    torch.backends.cudnn.benchmark = False
+    
+def make_dirs(cfg):
+    for dir in [cfg.model_dir]:
+        os.makedirs(dir, exist_ok=True)
+        
+def cfg_init(cfg, mode='train'):
+    set_seed(cfg.seed)
+    if mode == 'train':
+        make_dirs(cfg)
