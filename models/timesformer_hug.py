@@ -17,6 +17,7 @@ import segmentation_models_pytorch as smp
 
 from torch.optim import AdamW
 from warmup_scheduler import GradualWarmupScheduler
+import albumentations as A
 
 import utils
 
@@ -33,6 +34,7 @@ class TimesformerDataset(Dataset):
         self.cfg = cfg
         self.labels = labels
         
+        self.rotate = A.Compose([A.Rotate(8,p=1)])
         self.transform = transform
         self.xyxys=xyxys
         
@@ -73,7 +75,7 @@ class TimesformerDataset(Dataset):
                 data = self.transform(image=image, mask=label)
                 image = data['image'].unsqueeze(0)
                 label = data['mask']
-                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//1,self.cfg.size//1)).squeeze(0)
+                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//16,self.cfg.size//16)).squeeze(0)
             
             image = image.permute(1,0,2,3)
             frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
@@ -89,6 +91,13 @@ class TimesformerDataset(Dataset):
         else:
             image = self.images[idx]
             label = self.labels[idx]
+            # #3d rotate
+            # image=image.transpose(2,1,0)#(c,w,h)
+            # image=self.rotate(image=image)['image']
+            # image=image.transpose(0,2,1)#(c,h,w)
+            # image=self.rotate(image=image)['image']
+            # image=image.transpose(0,2,1)#(c,w,h)
+            # image=image.transpose(2,1,0)#(h,w,c)
 
             # image=self.fourth_augment(image, self.cfg.in_chans)
             
@@ -96,7 +105,7 @@ class TimesformerDataset(Dataset):
                 data = self.transform(image=image, mask=label)
                 image = data['image'].unsqueeze(0)
                 label = data['mask']
-                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//1,self.cfg.size//1)).squeeze(0)
+                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//16,self.cfg.size//16)).squeeze(0)
                 
             image = image.permute(1,0,2,3)
             frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
@@ -150,20 +159,20 @@ class TimesfomerModel(pl.LightningModule):
         self.save_hyperparameters()
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
+        self.IGNORE_INDEX = 255
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25)
-        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25,ignore_index=self.IGNORE_INDEX)
+        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
-
-        self.backbone = swin_transformer.swin3d_s(weights="KINETICS400_V1")
-        self.backbone.head = nn.Identity()
-        self.decoder = Decoder2D(in_channels=768, num_classes=1)
         
         self.backbone = TimesformerModel.from_pretrained("facebook/timesformer-hr-finetuned-k600")
 
         self.classifier = nn.Sequential(
             nn.Linear(768, (self.hparams.size//16)**2),  
         )
+        # self.classifier = nn.Sequential(
+        #     nn.Linear(768, 1),  
+        # )
         # self.resnet_to_rgb = nn.Conv2d(1, 3, kernel_size=1)
         #         # # # Segformer expects 2D input with shape (B, C, H, W)
         # self.encoder_2d = SegformerForSemanticSegmentation.from_pretrained(
@@ -194,50 +203,67 @@ class TimesfomerModel(pl.LightningModule):
     #     feat_2d = feat.mean(dim=2)  # average temporal patches: (B, C, H_patch, W_patch)
     #     seg_logits = self.decoder(feat_2d)  # (B, num_classes, 224, 224)
     #     return seg_logits
-    # # def forward(self, x):
+    # def forward(self, x):
     #     outputs = self.backbone(x, output_hidden_states=True)
     #     last_hidden_state = outputs.last_hidden_state  # tuple of all hidden layers
     #     last_hidden_state = last_hidden_state[:,1:,:]
     #     last_hidden_state = last_hidden_state.reshape(x.shape[0],16,14,14,768)
-    #     feat = last_hidden_state.permute(0,4,1,2,3)  # (B, C, T_patch, H_patch, W_patch)
-    #     feat_2d = feat.mean(dim=2)
-    #     seg_logits = self.decoder(feat_2d)  # (B, num_classes, 224, 224)
-    #     return seg_logits
-    
+    #     # feat = last_hidden_state.permute(0,4,1,2,3)  # (B, C, T_patch, H_patch, W_patch)
+    #     feat_2d = last_hidden_state.max(dim=1)[0]
+    #     seg_logits = self.classifier(feat_2d)
+    #     # seg_logits = self.decoder(feat_2d)  # (B, num_classes, 224, 224)
+    #     return seg_logits.permute(0,3,1,2)
     def forward(self, x):
-
         outputs = self.backbone(x, output_hidden_states=True)
         last_hidden_state = outputs.last_hidden_state  # tuple of all hidden layers
         cls = last_hidden_state[:,0,:]
+        # feat_2d = cls.max(dim=1)[0]  # average temporal patches: (B, C, H_patch, W_patch)
+        # seg_logits = self.classifier(feat_2d)  # (B, num_classes, 14, 14)
         preds = self.classifier(cls)
         preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
         return preds
     # def forward(self, x):
-    #     """
-    #     x: (B, C, T, H, W)
-    #     """
 
-    #     B, C, T, H, W = x.shape
-
-    #     # Pass through TimeSformer
     #     outputs = self.backbone(x, output_hidden_states=True)
-    #     tokens = outputs.last_hidden_state  # (B, N+1, 768)
+    #     last_hidden_state = outputs.last_hidden_state  # tuple of all hidden layers
+    #     cls = last_hidden_state[:,0,:]
+    #     preds = self.classifier(cls)
+    #     preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
+    #     return preds
+    
+    # def masked_loss(self, y_pred, y_true):
+    #     mask = (y_true != self.IGNORE_INDEX).float()
+    #     # y_true_clamped = torch.clamp(y_true, 0, 1).float()
 
-    #     # Remove CLS token if present
-    #     tokens = tokens[:, 1:, :]  # (B, N, 768)
-    #     # tokens= tokens.permute(0, 2, 1).contiguous()  # (B, 768, N)
-    #     # Pass through transformer decoder
-    #     decoded = self.decoder(tokens)  # (B, N, 768)
+    #     y_pred_masked = y_pred * mask
+    #     y_true_masked = y_true * mask
 
-    #     # Reshape tokens to (B, 768, H_patch, W_patch)
-    #     N = decoded.size(1)
-    #     H_patch = W_patch = int(N ** 0.5)
-    #     decoded = decoded.permute(0, 2, 1).contiguous().view(B, 768, H_patch, W_patch)
+    #     loss1 = self.loss_func1(y_pred_masked, y_true_masked)
+    #     loss2 = self.loss_func2(y_pred_masked, y_true_masked)
+    #     return 0.5*loss1 + 0.5 * loss2
+    # def masked_loss(self, y_pred, y_true):
+    #     # Create mask: 1 where valid, 0 where ignore
+    #     mask = (y_true != self.IGNORE_INDEX).float()
 
-    #     # Upsample to 2D map
-    #     seg_map = self.upsample_head(decoded)  # (B, 1, H_out, W_out)
-    #     # print("seg_map",seg_map.shape)
-    #     return seg_map
+    #     # Compute per-pixel loss (reduction='none' required)
+    #     loss1 = self.loss_func1(y_pred, y_true)  # e.g., nn.BCEWithLogitsLoss(reduction='none')
+    #     loss2 = self.loss_func2(y_pred, y_true)
+
+    #     # Apply mask
+    #     loss1 = (loss1 * mask).sum() / (mask.sum() + 1e-8)
+    #     loss2 = (loss2 * mask).sum() / (mask.sum() + 1e-8)
+
+    #     return 0.5 * loss1 + 0.5 * loss2
+    # def masked_loss(self, y_pred, y_true):
+    #     # Create mask where labels are valid (not equal to ignore index)
+    #     mask = (y_true != self.IGNORE_INDEX).float()
+
+    #     # Compute losses with masking
+    #     loss1 = self.loss_func1(y_pred, y_true, mask=mask)
+    #     loss2 = self.loss_func2(y_pred, y_true, mask=mask)
+
+    #     return 0.5 * loss1 + 0.5 * loss2
+
    
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -259,7 +285,7 @@ class TimesfomerModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=1,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=16,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)
@@ -267,8 +293,8 @@ class TimesfomerModel(pl.LightningModule):
     
     def configure_optimizers(self):
         # Separate the head parameters
-        head_params = list(self.decoder.parameters())
-        other_params = [p for n, p in self.backbone.named_parameters() if "decoder" not in n]
+        head_params = list(self.classifier.parameters())
+        other_params = [p for n, p in self.backbone.named_parameters() if "classifier" not in n]
 
         param_groups = [
             {'params': other_params, 'lr': self.hparams.lr},

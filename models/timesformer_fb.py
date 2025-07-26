@@ -45,9 +45,9 @@ class TimesformerDataset(Dataset):
     def __len__(self):
         return len(self.images)
     
-    def fourth_augment(self,image, in_chans=16):
+    def fourth_augment(self,image, in_chans=32):
         image_tmp = np.zeros_like(image)
-        cropping_num = random.randint(in_chans-6, in_chans)
+        cropping_num = random.randint(in_chans-10, in_chans)
 
         start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
         crop_indices = np.arange(start_idx, start_idx + cropping_num)
@@ -93,7 +93,7 @@ class TimesformerDataset(Dataset):
             image = self.images[idx]
             label = self.labels[idx]
 
-            # image=self.fourth_augment(image, self.cfg.in_chans)
+            image=self.fourth_augment(image, self.cfg.in_chans)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)

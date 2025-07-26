@@ -22,6 +22,7 @@ import utils
 
 from transformers import SegformerForSemanticSegmentation
 from torchvision.models.video import swin_transformer
+import albumentations as A
 
 
 # Convert to PIL and then to 3 channels
@@ -37,6 +38,7 @@ class TimesformerDataset(Dataset):
         self.labels = labels
         
         self.transform = transform
+        self.rotate = A.Compose([A.Rotate(8,p=1)])
         self.xyxys=xyxys
         
         self.processor = AutoImageProcessor.from_pretrained("facebook/timesformer-base-finetuned-k600", use_fast=True)
@@ -76,7 +78,7 @@ class TimesformerDataset(Dataset):
                 data = self.transform(image=image, mask=label)
                 image = data['image'].unsqueeze(0)
                 label = data['mask']
-                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//2,self.cfg.size//2)).squeeze(0)
+                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//16,self.cfg.size//16)).squeeze(0)
             
             image = image.permute(1,0,2,3)
             frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
@@ -92,6 +94,13 @@ class TimesformerDataset(Dataset):
         else:
             image = self.images[idx]
             label = self.labels[idx]
+            # #3d rotate
+            # image=image.transpose(2,1,0)#(c,w,h)
+            # image=self.rotate(image=image)['image']
+            # image=image.transpose(0,2,1)#(c,h,w)
+            # image=self.rotate(image=image)['image']
+            # image=image.transpose(0,2,1)#(c,w,h)
+            # image=image.transpose(2,1,0)#(h,w,c)
 
             # image=self.fourth_augment(image, self.cfg.in_chans)
             
@@ -99,7 +108,7 @@ class TimesformerDataset(Dataset):
                 data = self.transform(image=image, mask=label)
                 image = data['image'].unsqueeze(0)
                 label = data['mask']
-                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//2,self.cfg.size//2)).squeeze(0)
+                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//16,self.cfg.size//16)).squeeze(0)
                 
             image = image.permute(1,0,2,3)
             frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
@@ -111,34 +120,19 @@ class TimesformerDataset(Dataset):
             pixel_values = encoding["pixel_values"].squeeze(0)
             
             return pixel_values, label
-        
-# class TransformerDecoder(nn.Module):
-#     def __init__(self, embed_dim=768, num_layers=1, num_heads=8, ff_dim=2048):
-#         super().__init__()
-#         decoder_layer = nn.TransformerEncoderLayer(
-#             d_model=embed_dim,
-#             nhead=num_heads,
-#             dim_feedforward=ff_dim,
-#             batch_first=True
-#         )
-#         self.decoder = nn.TransformerEncoder(decoder_layer, num_layers=num_layers)
-
-#     def forward(self, x):
-#         return self.decoder(x)
-
 class Decoder2D(nn.Module):
     def __init__(self, in_channels, num_classes):
         super().__init__()
         self.up1 = nn.ConvTranspose2d(in_channels, 256, kernel_size=4, stride=4)
         self.bn1 = nn.BatchNorm2d(256)
-        self.up2 = nn.ConvTranspose2d(256, 64, kernel_size=4, stride=4)
-        self.bn2 = nn.BatchNorm2d(64)
-        self.conv_out = nn.Conv2d(64, num_classes, kernel_size=1)
+        # self.up2 = nn.ConvTranspose2d(256, 64, kernel_size=4, stride=4)
+        # self.bn2 = nn.BatchNorm2d(64)
+        self.conv_out = nn.Conv2d(256, num_classes, kernel_size=1)
 
     def forward(self, x):
         x = F.relu(self.bn1(self.up1(x)))  # upsample 7 -> 28
-        x = F.relu(self.bn2(self.up2(x)))  # upsample 28 -> 112
-        # x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)  # 112 -> 224
+        # x = F.relu(self.bn2(self.up2(x)))  # upsample 28 -> 112
+        # x = F.interpolate(x, scale_factor=4, mode='bilinear', align_corners=False)  # 112 -> 224
         x = self.conv_out(x)
         return x
     
@@ -154,28 +148,49 @@ class SwinModel(pl.LightningModule):
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
 
-        self.backbone = swin_transformer.swin3d_s(weights="KINETICS400_V1") #KINETICS400_IMAGENET22K_V1 
+        self.backbone = swin_transformer.swin3d_t(weights="KINETICS400_V1") #KINETICS400_IMAGENET22K_V1 
         self.backbone.head = nn.Identity()
-        self.decoder = Decoder2D(in_channels=768, num_classes=1)
+        self.decoder = Decoder2D(in_channels=512, num_classes=1)
+        # self.classifier = nn.Sequential(
+        #     nn.Linear(384, 1),  
+        # )
+        self.classifier = nn.Sequential(
+            nn.Linear(768, (self.hparams.size//16)**2),  
+        )
 
         self.features = None
-        self.hook_handle = self.backbone.norm.register_forward_hook(self._hook_fn)
+        # self.hook_handle = self.backbone.features[-1].register_forward_hook(self._hook_fn)
+        self.hook_handle = self.backbone.features[4].register_forward_hook(self._hook_fn)
+        # self.hook_handle = self.backbone.norm.register_forward_hook(self._hook_fn)
         
     def _hook_fn(self, module, input, output):
         self.features = output
+        
+    # def forward(self, x):
+    #     # x = x.permute(0,2,1,3,4)  # (B, T_patch, H_patch, W_patch, C) -> (B, C, T_patch, H_patch, W_patch)
+    #     _ = self.backbone(x)
+    #     feat = self.features 
+    #     print(feat.shape)
+    #     feat_2d = feat.max(dim=1)[0]  # average temporal patches
+        
 
     def forward(self, x):
         x = x.permute(0,2,1,3,4)
-        _ = self.backbone(x)  # runs backbone, sets self.features
-        feat = self.features  # (B, T_patch, H_patch, W_patch, C)
-        feat = feat.permute(0, 4, 1, 2, 3)  # (B, C, T_patch, H_patch, W_patch)
-        feat_2d = feat.max(dim=2)[0]  # average temporal patches: (B, C, H_patch, W_patch)
-        seg_logits = self.decoder(feat_2d)  # (B, num_classes, 224, 224)
-        return seg_logits
+        output = self.backbone(x)  # runs backbone, sets self.features
+        # feat = self.features  # (B, T_patch, H_patch, W_patch, C)
+        # feat_2d = feat.max(dim=1)[0]  # average temporal patches: (B, C, H_patch, W_patch)
+        # seg_logits = self.classifier(feat_2d)  # (B, num_classes, 14, 14)
+        preds = self.classifier(output)
+        # preds = preds.view(-1,1,28,28)
+        preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
+        return preds
+        # return seg_logits.permute(0,3,1,2)
    
     def training_step(self, batch, batch_idx):
         x, y = batch
         outputs = self(x)
+        # print(outputs.shape)
+        # print(y.shape)
         loss = self.loss_func(outputs, y)
         if torch.isnan(loss):
             print("Loss nan encountered")
@@ -193,7 +208,7 @@ class SwinModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=2,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=16,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)
@@ -232,6 +247,9 @@ class SwinModel(pl.LightningModule):
                 out=np.zeros_like(mask_pred_np),
                 where=mask_count_np != 0
             )
+            # self.logger.experiment.log({
+            #     "masks": [wandb.Image(np.clip(final_mask, 0, 1), caption="probs")]
+            # })
             self.hparams.wandb_logger.log_image(key="masks", images=[np.clip(final_mask, 0, 1)], caption=["probs"])
 
         self.mask_pred = np.zeros(self.hparams.pred_shape)
@@ -295,10 +313,10 @@ class GradualWarmupSchedulerV2(GradualWarmupScheduler):
         else:
             return [base_lr * ((self.multiplier - 1.) * self.last_epoch / self.total_epoch + 1.) for base_lr in self.base_lrs]
 
-def get_scheduler(optimizer, scheduler=None, epochs=30):
+def get_scheduler(optimizer, scheduler=None, epochs=40):
     if scheduler == 'cosine':
         scheduler_after = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, 20, eta_min=1e-6)
+            optimizer, 40, eta_min=1e-6)
     else:
         scheduler_after = torch.optim.lr_scheduler.LinearLR(
             optimizer,
@@ -307,7 +325,7 @@ def get_scheduler(optimizer, scheduler=None, epochs=30):
             total_iters = epochs
         )
     scheduler = GradualWarmupSchedulerV2(
-        optimizer, multiplier=1.0, total_epoch=1, after_scheduler=scheduler_after)
+        optimizer, multiplier=1.0, total_epoch=4, after_scheduler=scheduler_after)
     return scheduler
 
 def scheduler_step(scheduler, avg_val_loss, epoch):

@@ -52,27 +52,32 @@ class CFG:
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 17
-    in_chans = 26
+    start_idx = 24
+    in_chans = 16
     
     size = 224
     tile_size = 224
     stride = tile_size // 8 
     
     train_batch_size =  10 # 32
-    valid_batch_size = train_batch_size*2
+    valid_batch_size = 10
     
     lr = 1e-4
     num_workers = 8
     # ============== model cfg =============
     scheduler = 'linear' # 'cosine', 'linear'
-    epochs = 30
+    epochs = 50
     warmup_factor = 10
-    lr = 1e-4
+    
+    # Size of fragments
+    frags_ratio1 = ["rem",'rect','frag','202','s4']
+    frags_ratio2 = ['nothing']
+    ratio1 = 2
+    ratio2 = 1
     
     # ============== fold =============
-    segments = ['vals42', 'rect55'] 
-    valid_id = 'vals42'
+    segments = ['frag5', '20231210132040'] 
+    valid_id = '20231210132040'
     # ============== fixed =============
     min_lr = 1e-7
     weight_decay = 1e-6
@@ -122,21 +127,31 @@ def get_transforms(data, cfg):
     elif data == 'valid':
         aug = A.Compose(cfg.valid_aug_list)
     return aug   
+
+# End any existing run (if still active)
+if wandb.run is not None:
+    wandb.finish()
         
 utils.cfg_init(CFG)
 torch.set_float32_matmul_precision('medium')
 
-
+# for i in [15,20,25]:
+# CFG.start_idx = i
 fragment_id = CFG.valid_id
 run_slug=f'SWIN_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}'
 valid_mask_gt = cv2.imread(f"{CFG.segment_path}{fragment_id}/{fragment_id}_inklabels.png", 0)
 
 pred_shape=valid_mask_gt.shape
-if (any(sub in fragment_id for sub in ["frag", "rect", "vals4", "remaining"]) or fragment_id in ["20231210132040"]):
-    # For fragments with 2x downsampled masks
-    pred_shape = tuple(s // 2 for s in valid_mask_gt.shape)
+if (any(sub in fragment_id for sub in CFG.frags_ratio1)):
+    pred_shape = tuple(s // CFG.ratio1 for s in valid_mask_gt.shape)
+elif (any(sub in fragment_id for sub in CFG.frags_ratio2)):
+    pred_shape = tuple(s // CFG.ratio2 for s in valid_mask_gt.shape)
+else:
+    pass
+
 
 train_images, train_masks, valid_images, valid_masks, valid_xyxys = utils.get_train_valid_dataset(CFG)
+
 print('train_images',train_images[0].shape)
 print("Length of train images:", len(train_images))
 
@@ -159,16 +174,16 @@ valid_loader = DataLoader(valid_dataset,
 print(f"Train loader length: {len(train_loader)}")
 print(f"Valid loader length: {len(valid_loader)}")
 
-wandb_logger = WandbLogger(project="vesivus",name=run_slug)  
+wandb_logger = WandbLogger(project="vesivus", name=run_slug)  
 
 model = swin.SwinModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger)
-wandb_logger.watch(model, log="all", log_freq=100)
+wandb_logger.watch(model, log="all", log_freq=50)
 
-model = swin.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['rect55', 'remaining5']_valid=rect55_size=224_lr=0.0001_in_chans=26_epoch=7.ckpt")
+# model = swin.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/SWIN_['20231210132040', 'vals42']_valid=vals42_size=224_lr=0.0001_in_chans=16_epoch=7.ckpt")
 trainer = pl.Trainer(
     max_epochs=CFG.epochs,
     accelerator="gpu",
-    check_val_every_n_epoch=2,
+    check_val_every_n_epoch=4,
     devices=-1,
     logger=wandb_logger,
     default_root_dir="./modelss",
@@ -176,7 +191,7 @@ trainer = pl.Trainer(
     precision='16-mixed',
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
-    strategy='ddp',
+    strategy='ddp_find_unused_parameters_true',
     callbacks=[ModelCheckpoint(filename=f'{run_slug}_'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
     ]
 

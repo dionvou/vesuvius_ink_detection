@@ -51,7 +51,7 @@ class CFG:
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 16
+    start_idx = 14
     in_chans = 32
     
     size = 224
@@ -61,17 +61,23 @@ class CFG:
     train_batch_size =  6 # 32
     valid_batch_size = 15
     
-    lr = 1e-4
-    num_workers = 8
+    # Size of fragments
+    frags_ratio1 = ['frag','202','vals','left']
+    frags_ratio2 = ['nothing']
+    ratio1 = 2
+    ratio2 = 1
+    
+    # ============== fold =============
+    segments = ['frag5','vals42'] 
+    valid_id = 'vals42'
+    
     # ============== model cfg =============
+
+    num_workers = 8
     scheduler = 'linear' # 'cosine', 'linear'
     epochs = 30
     warmup_factor = 10
-    lr = 1e-4
-    
-    # ============== fold =============
-    segments = ['rect11', 'remaining1'] 
-    valid_id = 'rect11'
+    lr = 5e-5
     # ============== fixed =============
     min_lr = 1e-7
     weight_decay = 1e-6
@@ -130,11 +136,27 @@ fragment_id = CFG.valid_id
 run_slug=f'TF_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}'
 valid_mask_gt = cv2.imread(f"{CFG.segment_path}{fragment_id}/{fragment_id}_inklabels.png", 0)
 
-pred_shape=valid_mask_gt.shape
-if (any(sub in fragment_id for sub in ["frag", "rect", "vals4", "remaining"]) or fragment_id in ["20231210132040"]):
-    # For fragments with 2x downsampled masks
-    pred_shape = tuple(s // 2 for s in valid_mask_gt.shape)
+# pred_shape=valid_mask_gt.shape
+# if (any(sub in fragment_id for sub in ["frag", "rect", "vals", "remaining"]) or fragment_id in ["20231210132040"]):
+#     # For fragments with 2x downsampled masks
+#     pred_shape = tuple(s // 2 for s in valid_mask_gt.shape)
 
+pred_shape=valid_mask_gt.shape
+if (any(sub in fragment_id for sub in CFG.frags_ratio1)):
+    pred_shape = tuple(s // CFG.ratio1 for s in valid_mask_gt.shape)
+elif (any(sub in fragment_id for sub in CFG.frags_ratio2)):
+    pred_shape = tuple(s // CFG.ratio2 for s in valid_mask_gt.shape)
+else:
+    pass
+
+# pred_shape=valid_mask_gt.shape
+# if (any(sub in fragment_id for sub in ["frag", "rect", "vals", "remaining"]) or fragment_id in ["20231210132040"]):
+#     pred_shape = tuple(s // 2.5 for s in valid_mask_gt.shape)
+#     # pred_shape = tuple(int(s / 1.8)  for s in valid_mask_gt.shape)
+
+# elif any(sub in fragment_id for sub in ["PHerc"]):
+#     pred_shape = tuple(s // 3.5 for s in valid_mask_gt.shape)
+#     # pred_shape = tuple(int(s / 3.5)  for s in valid_mask_gt.shape)
 train_images, train_masks, valid_images, valid_masks, valid_xyxys = utils.get_train_valid_dataset(CFG)
 print('train_images',train_images[0].shape)
 print("Length of train images:", len(train_images))
