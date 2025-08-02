@@ -47,7 +47,7 @@ class TimesformerDataset(Dataset):
     
     def fourth_augment(self,image, in_chans=32):
         image_tmp = np.zeros_like(image)
-        cropping_num = random.randint(in_chans-10, in_chans)
+        cropping_num = random.randint(in_chans-6, in_chans)
 
         start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
         crop_indices = np.arange(start_idx, start_idx + cropping_num)
@@ -66,6 +66,16 @@ class TimesformerDataset(Dataset):
             image_tmp[..., temporal_random_cutout_idx] = 0
         image = image_tmp
         return image
+    
+    def shuffle_d_axis(self,image):
+        # image shape: (H, W, D)
+        d = image.shape[2]
+        shuffled_indices = np.arange(d)
+        np.random.shuffle(shuffled_indices)
+
+        # Reorder along D axis
+        image_shuffled = image[:, :, shuffled_indices]
+        return image_shuffled
 
     def __getitem__(self, idx):
         if self.xyxys is not None: #VALID
@@ -94,6 +104,7 @@ class TimesformerDataset(Dataset):
             label = self.labels[idx]
 
             image=self.fourth_augment(image, self.cfg.in_chans)
+            # image = self.shuffle_d_axis(image)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)
@@ -120,8 +131,10 @@ class TimesfomerModel(pl.LightningModule):
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25)
-        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
+        self.IGNORE_INDEX = 127
+
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
+        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
     
         self.backbone=TimeSformer(img_size=224, num_classes=0, num_frames=32,attention_type='divided_space_time', in_chans=3)

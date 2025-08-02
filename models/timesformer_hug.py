@@ -39,6 +39,8 @@ class TimesformerDataset(Dataset):
         self.xyxys=xyxys
         
         self.processor = AutoImageProcessor.from_pretrained("facebook/timesformer-base-finetuned-k600", use_fast=True)
+        print("Using Timesformer processor with image size:", self.processor)
+        self.processor.do_normalize = False
         self.pil_transform  = pil_transform
         
     def __len__(self):
@@ -65,6 +67,15 @@ class TimesformerDataset(Dataset):
             image_tmp[..., temporal_random_cutout_idx] = 0
         image = image_tmp
         return image
+    def shuffle_d_axis(self,image):
+        # image shape: (H, W, D)
+        d = image.shape[2]
+        shuffled_indices = np.arange(d)
+        np.random.shuffle(shuffled_indices)
+
+        # Reorder along D axis
+        image_shuffled = image[:, :, shuffled_indices]
+        return image_shuffled
 
     def __getitem__(self, idx):
         if self.xyxys is not None: #VALID
@@ -87,6 +98,7 @@ class TimesformerDataset(Dataset):
                 )
             # encoding["pixel_values"] is (1, T, C, H, W)
             pixel_values = encoding["pixel_values"].squeeze(0)
+
             return pixel_values, label,xy
         else:
             image = self.images[idx]
@@ -99,7 +111,8 @@ class TimesformerDataset(Dataset):
             # image=image.transpose(0,2,1)#(c,w,h)
             # image=image.transpose(2,1,0)#(h,w,c)
 
-            # image=self.fourth_augment(image, self.cfg.in_chans)
+            image=self.fourth_augment(image, self.cfg.in_chans)
+            # image = self.shuffle_d_axis(image)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)
@@ -153,15 +166,15 @@ class Decoder2D(nn.Module):
         return x
     
 class TimesfomerModel(pl.LightningModule):
-    def __init__(self, pred_shape, size, lr, scheduler=None,wandb_logger=None):
+    def __init__(self, pred_shape, size, lr, scheduler=None,wandb_logger=None, with_norm=False):
         super(TimesfomerModel, self).__init__()
 
         self.save_hyperparameters()
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
-        self.IGNORE_INDEX = 255
+        self.IGNORE_INDEX = 127
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25,ignore_index=self.IGNORE_INDEX)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
         
@@ -170,6 +183,10 @@ class TimesfomerModel(pl.LightningModule):
         self.classifier = nn.Sequential(
             nn.Linear(768, (self.hparams.size//16)**2),  
         )
+        
+        if self.hparams.with_norm:
+            self.normalization=nn.BatchNorm3d(num_features=16)           
+
         # self.classifier = nn.Sequential(
         #     nn.Linear(768, 1),  
         # )
@@ -214,6 +231,8 @@ class TimesfomerModel(pl.LightningModule):
     #     # seg_logits = self.decoder(feat_2d)  # (B, num_classes, 224, 224)
     #     return seg_logits.permute(0,3,1,2)
     def forward(self, x):
+        if self.hparams.with_norm:
+            x=self.normalization(x)
         outputs = self.backbone(x, output_hidden_states=True)
         last_hidden_state = outputs.last_hidden_state  # tuple of all hidden layers
         cls = last_hidden_state[:,0,:]

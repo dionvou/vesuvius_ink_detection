@@ -68,11 +68,11 @@ class CFG:
     comp_dataset_path = f'./'
     
     exp_name = 'pretraining_all'
-
+    
     # ============== model cfg =============
-
+    frags = ['frag5','20231210132040']
+    valid_id = '20231210132040'#'20240304141530'#'20231210132040'
     backbone='resnet3d'
-    in_chans = 30 
     # ============== training cfg =============
     size = 256
     tile_size = 256
@@ -83,10 +83,13 @@ class CFG:
 
     scheduler = 'GradualWarmupSchedulerV2'
     
+    start_idx = 22
+    in_chans = 16
+    
     epochs = 30 # 30
     lr = 1.2e-5
     # ============== fold =============
-    valid_id = '20231210132040'#'20240304141530'#'20231210132040'
+    
 
     # ============== fixed =============
     pretrained = True
@@ -95,7 +98,7 @@ class CFG:
 
     seed = 130697
     
-    frags = []
+    frags_ = []
 
     outputs_path = f'./outputs/{comp_name}/{exp_name}/'
 
@@ -114,6 +117,8 @@ class CFG:
         # A.RandomResizedCrop(
         #     size, size, scale=(0.7, 1.0)),
         A.Resize(size, size),
+        A.RandomResizedCrop(
+            size, size, scale=(0.3, 1.0)),
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
         # A.RandomRotate90(p=0.6),
@@ -136,42 +141,6 @@ class CFG:
         ),
         ToTensorV2(transpose_mask=True),
     ]
-    # train_aug_list = [
-    #     A.Resize(size, size),
-    #     A.HorizontalFlip(p=0.5),
-    #     A.VerticalFlip(p=0.5),
-
-    #     A.RandomGamma(gamma_limit=(70, 130), p=0.5),
-    #     A.RandomBrightnessContrast(p=0.75),
-    #     # A.CLAHE(clip_limit=2.0, tile_grid_size=(8,8), p=0.3),
-
-    #     A.ShiftScaleRotate(
-    #         rotate_limit=360, shift_limit=0.15, scale_limit=0.1, p=0.75
-    #     ),
-
-    #     A.OneOf([
-    #         A.GaussNoise(var_limit=[10, 50]),
-    #         A.GaussianBlur(),
-    #         A.MotionBlur(),
-    #     ], p=0.4),
-
-    #     A.ElasticTransform(alpha=1.0, sigma=50, alpha_affine=10, p=0.3),
-
-    #     A.CoarseDropout(
-    #         max_holes=2,
-    #         max_width=int(size * 0.2),
-    #         max_height=int(size * 0.2),
-    #         mask_fill_value=0,
-    #         p=0.5
-    #     ),
-
-    #     A.Normalize(
-    #         mean=[0] * in_chans,
-    #         std=[1] * in_chans
-    #     ),
-
-    #     ToTensorV2(transpose_mask=True),
-    # ]
 
 
     valid_aug_list = [
@@ -219,9 +188,11 @@ cfg_init(CFG)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def read_image_mask(fragment_id,start_idx=15,end_idx=15+CFG.in_chans):
+def read_image_mask(fragment_id, start_idx, in_chans):
 
     images = []
+    start_idx = int(start_idx)
+    end_idx = start_idx + in_chans
     idxs = range(start_idx, end_idx)
 
     for i in idxs:
@@ -241,44 +212,35 @@ def read_image_mask(fragment_id,start_idx=15,end_idx=15+CFG.in_chans):
         # else:
         #     image = cv2.imread(f"train_scrolls/{fragment_id}/layers/{i:02}.png", 0)
 
-
         # if (any(sub in fragment_id for sub in  ["frag", "rect", "remaining","202","left"])):
         #     image = cv2.resize(image, (image.shape[1]//2,image.shape[0]//2), interpolation = cv2.INTER_AREA)
         # else:
         #     image = cv2.resize(image, (image.shape[1]//1,image.shape[0]//1), interpolation = cv2.INTER_AREA)
             # Resize safely if required
-        # if any(sub in fragment_id for sub in ["frag", "rect", "remaining", "202", "left"]):
-        #     new_h, new_w = image.shape[0] // 2, image.shape[1] // 2  # height, width order corrected
-        # else:
-        #     new_h, new_w = image.shape[0], image.shape[1]
+        if any(sub in fragment_id for sub in ["frag"]):
+            new_h, new_w = image.shape[0]//2, image.shape[1]//2  #5 height, width order corrected
+        else:
+            new_h, new_w = image.shape[0]//2, image.shape[1]//2
         # # HERE RESIZE
-        new_h, new_w = image.shape[0] // 2, image.shape[1] // 2  # height, width order corrected
-
+        # new_h, new_w = image.shape[0] // 2, image.shape[1] // 2  # height, width order corrected
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        # # # assert image.max() > 300 # Ensure max value is above 300
 
-        # image = resize(
-        #     image,
-        #     (new_h, new_w),
-        #     preserve_range=True,
-        #     anti_aliasing=True
-        # ).astype(image.dtype)
         image_shape = (image.shape[1], image.shape[0])
         
-        pad0 = (CFG.size - image.shape[0] % CFG.size)
-        pad1 = (CFG.size - image.shape[1] % CFG.size)
+        # pad0 = (CFG.size - image.shape[0] % CFG.size)
+        # pad1 = (CFG.size - image.shape[1] % CFG.size)
 
-        image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
+        # image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
         
         # image = image.astype(np.float32) / 255  # Normalize 
-        # image=np.clip(image,0,200)
+        image=np.clip(image,0,200)
         images.append(image)
+        
     images = np.stack(images, axis=2)
-    print("Images shape:", images.shape)
     
     
     # if fragment_id == 'left':
-    #     images=images[:,:,::-1]
+    # images=images[:,:,::-1]
 
     # scale_factor = 1 / 2
     # if isinstance(images, np.ndarray):
@@ -305,31 +267,20 @@ def read_image_mask(fragment_id,start_idx=15,end_idx=15+CFG.in_chans):
     #     images = tensor_resized.squeeze().permute(1, 2, 0).numpy()  # (H, W, 2D)
 
     mask = cv2.imread( f"train_scrolls/{fragment_id}/{fragment_id}_inklabels.png", 0)
-    # print(mask.shape)
-    # print(images.shape)
-    # if images.shape[0]!=mask.shape[0]//2 or images.shape[1]!=mask.shape[1]//4:
-    #     mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
     
     fragment_mask=cv2.imread(f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
-    # if images.shape[0]!=fragment_mask.shape[0]//2 or images.shape[0]!=fragment_mask.shape[0]//4:
-    #     fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
-
-    # if (any(sub in fragment_id for sub in ["frag", "rect", "remaining","202","left"])):
-    #     fragment_mask = cv2.resize(fragment_mask, (fragment_mask.shape[1]//2,fragment_mask.shape[0]//2), interpolation = cv2.INTER_AREA)
-    #     mask = cv2.resize(mask , (mask.shape[1]//2,mask.shape[0]//2), interpolation = cv2.INTER_AREA)
+    print("mask_2",fragment_mask.shape)
+    # if fragment_id =='s4':
+    #     mask = cv2.resize(mask, (images.shape[1], images.shape[0]), interpolation=cv2.INTER_AREA)
     # else:
-    #     fragment_mask = cv2.resize(fragment_mask, (fragment_mask.shape[1]//1,fragment_mask.shape[0]//1), interpolation = cv2.INTER_AREA)
-    #     mask = cv2.resize(mask , (mask.shape[1]//1,mask.shape[0]//1), interpolation = cv2.INTER_AREA)
-    #     # fragment_mask = cv2.resize(fragment_mask, (fragment_mask.shape[1]//1,fragment_mask.shape[0]//2), interpolation = cv2.INTER_AREA)
-        # mask = cv2.resize(mask , (mask.shape[1]//1,mask.shape[0]//1), interpolation = cv2.INTER_AREA)
     mask = cv2.resize(mask , image_shape, interpolation = cv2.INTER_AREA)
-    mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
+        # mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
     mask = mask.astype('float32')
     mask/=255 # Binarize
     
     fragment_mask = cv2.resize(fragment_mask , image_shape, interpolation = cv2.INTER_AREA)
-    fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
-    
+    # fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
+    print("mask",mask.shape)
     assert images.shape[0]==mask.shape[0]
     return images, mask,fragment_mask
 
@@ -340,42 +291,40 @@ def get_train_valid_dataset():
     valid_images = []
     valid_masks = []
     valid_xyxys = []
-    for fragment_id in ['s4','frag5','20231210132040']:#['frag5','frag1','20231210132040']:  #20231210132040  # for fragment_id in ['20230820203112','20231005123333']:
-        CFG.frags.append(fragment_id)
-        
+    
+    for fragment_id in CFG.frags:
+        CFG.frags_.append(fragment_id)
+    
         print('reading ',fragment_id)
-        image, mask,fragment_mask = read_image_mask(fragment_id)
-        stride= CFG.stride
-        x1_list = list(range(0, image.shape[1]-CFG.tile_size+1,stride))
-        y1_list = list(range(0, image.shape[0]-CFG.tile_size+1, stride))
-        windows_dict={}
+        image, mask,fragment_mask = read_image_mask(fragment_id, CFG.start_idx, CFG.in_chans)
+
+        x1_list = list(range(0, image.shape[1] - CFG.tile_size + 1, CFG.stride))
+        y1_list = list(range(0, image.shape[0] - CFG.tile_size + 1, CFG.stride))
+        windows_dict = {}
+
         for a in y1_list:
             for b in x1_list:
-                for yi in range(0,CFG.tile_size,CFG.size):
-                    for xi in range(0,CFG.tile_size,CFG.size):
-                        y1=a+yi
-                        x1=b+xi
-                        y2=y1+CFG.size
-                        x2=x1+CFG.size
-                        if fragment_id!=CFG.valid_id:
-                            if (y1,y2,x1,x2) not in windows_dict:
-                                if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.01):
-                                    if not np.any(fragment_mask[a:a+ CFG.tile_size, b:b + CFG.tile_size]==0):
-                                        train_images.append(image[y1:y2, x1:x2])
-                                        
-                                        train_masks.append(mask[y1:y2, x1:x2, None])
-                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
-                                        windows_dict[(y1,y2,x1,x2)]='1'
-                        if fragment_id==CFG.valid_id:
-                            if (y1,y2,x1,x2) not in windows_dict:
-                                if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]==0):
+                if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size] == 0):
+                    
+                    if fragment_id == CFG.valid_id or not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size] < 0.05):
+                        for yi in range(0, CFG.tile_size, CFG.size):
+                            for xi in range(0, CFG.tile_size, CFG.size):
+                                y1 = a + yi
+                                x1 = b + xi
+                                y2 = y1 + CFG.size
+                                x2 = x1 + CFG.size
+                                if fragment_id != CFG.valid_id:
+                                    train_images.append(image[y1:y2, x1:x2])
+                                    train_masks.append(mask[y1:y2, x1:x2, None])
+                                    assert image[y1:y2, x1:x2].shape == (CFG.size, CFG.size, CFG.in_chans)
+                                    windows_dict[(y1, y2, x1, x2)] = '1'
+                                else:
+                                    if (y1, y2, x1, x2) not in windows_dict:
                                         valid_images.append(image[y1:y2, x1:x2])
                                         valid_masks.append(mask[y1:y2, x1:x2, None])
-
                                         valid_xyxys.append([x1, y1, x2, y2])
-                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
-                                        windows_dict[(y1,y2,x1,x2)]='1'
-
+                                        assert image[y1:y2, x1:x2].shape == (CFG.size, CFG.size, CFG.in_chans)
+                                        windows_dict[(y1, y2, x1, x2)] = '1'
 
     return train_images, train_masks, valid_images, valid_masks, valid_xyxys
 
@@ -424,21 +373,9 @@ class CustomDataset(Dataset):
     def __len__(self):
         return len(self.images)
     
-    # def cubeTranslate(self,y):
-    #     x=np.random.uniform(0,1,4).reshape(2,2)
-    #     x[x<.4]=0
-    #     x[x>.633]=2
-    #     x[(x>.4)&(x<.633)]=1
-    #     mask=cv2.resize(x, (x.shape[1]*64,x.shape[0]*64), interpolation = cv2.INTER_AREA)
-
-        
-    #     x=np.zeros((self.cfg.size,self.cfg.size,self.cfg.in_chans)).astype(np.uint8)
-    #     for i in range(3):
-    #         x=np.where(np.repeat((mask==0).reshape(self.cfg.size,self.cfg.size,1), self.cfg.in_chans, axis=2),y[:,:,i:self.cfg.in_chans+i],x)
-    #     return x
     def fourth_augment(self,image):
         image_tmp = np.zeros_like(image)
-        cropping_num = random.randint(24, 30)
+        cropping_num = random.randint(CFG.in_chans-6, CFG.in_chans)
 
         start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
         crop_indices = np.arange(start_idx, start_idx + cropping_num)
@@ -453,11 +390,21 @@ class CustomDataset(Dataset):
 
         image_tmp[..., start_paste_idx : start_paste_idx + cropping_num] = image[..., crop_indices]
 
-        if random.random() > 0.4:
-            image_tmp[..., temporal_random_cutout_idx] = 0
+        # if random.random() > 0.4:
+        #     image_tmp[..., temporal_random_cutout_idx] = 0
         image = image_tmp
         return image
     
+    def shuffle_d_axis(self,image):
+        # image shape: (H, W, D)
+        d = image.shape[2]
+        shuffled_indices = np.arange(d)
+        np.random.shuffle(shuffled_indices)
+
+        # Reorder along D axis
+        image_shuffled = image[:, :, shuffled_indices]
+        return image_shuffled
+
     
     def histogram_match(self, image, reference):
         """
@@ -488,12 +435,8 @@ class CustomDataset(Dataset):
             image = self.images[idx]
             label = self.labels[idx]
             
-            # image = image.astype(np.float32) / 65535.0  
-            # Apply histogram matching
-            # if self.do_hist_match and self.reference_image is not None:
-            #     image = self.histogram_match(image, self.reference_image)
-            
             image=self.fourth_augment(image)
+            # image = self.shuffle_d_axis(image)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)
@@ -502,7 +445,6 @@ class CustomDataset(Dataset):
                 label=F.interpolate(label.unsqueeze(0),(self.cfg.size//4,self.cfg.size//4)).squeeze(0)
             return image, label
 
-# from resnetall import generate_model
 def init_weights(m):
     if isinstance(m, nn.Conv2d):
         nn.init.kaiming_normal_(m, mode='fan_out', nonlinearity='relu')
@@ -539,7 +481,7 @@ class RegressionPLModel(pl.LightningModule):
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary')
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25)
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+ 0.5*self.loss_func2(x,y)
 
@@ -577,15 +519,13 @@ class RegressionPLModel(pl.LightningModule):
 
         # self.resnet_to_rgb = nn.Conv2d(1, 3, kernel_size=1)
 
-        # Segformer expects 2D input with shape (B, C, H, W)
+        # # Segformer expects 2D input with shape (B, C, H, W)
         # self.encoder_2d = SegformerForSemanticSegmentation.from_pretrained(
         #     "nvidia/mit-b0",
         #     num_labels=1,
         #     ignore_mismatched_sizes=True,
         #     num_channels=3
-        # )
-        # initialize_decoder_weights(self.decoder)
-        
+        # )        
         
         # # LOAD YOUSEF PRETRAINED WEIGHTS ON BACKBONE 
         # self.backbone = generate_model(
@@ -647,6 +587,8 @@ class RegressionPLModel(pl.LightningModule):
         #     print("✅ Backbone weights loaded successfully with no issues.")
         # self.backbone.load_state_dict(torch.load('checkpoints/frags_extended4_18chans_20240814211913_0_fr_i3depoch=19.ckpt'),strict=False)
         self.decoder = Decoder(encoder_dims=[x.size(1) for x in self.backbone(torch.rand(1,1,CFG.in_chans,256,256))], upscale=1)
+        # init_weights(self.decoder)
+
         if self.hparams.with_norm:
             self.normalization=nn.BatchNorm3d(num_features=1)            
     
@@ -658,11 +600,9 @@ class RegressionPLModel(pl.LightningModule):
             x=self.normalization(x)
         feat_maps = self.backbone(x)        
         feat_maps_pooled = [torch.max(f, dim=2)[0] for f in feat_maps]
-
-
         pred_mask = self.decoder(feat_maps_pooled)
         return pred_mask
-    # # BACKBONE FORWARD
+    # BACKBONE FORWARD
     # def forward(self, x):
     #     if x.ndim==4:
     #         x=x[:,None]
@@ -685,7 +625,6 @@ class RegressionPLModel(pl.LightningModule):
         
         if torch.isnan(loss1):
             print("Loss nan encountered")
-        
         # Log the loss
         self.log("train/total_loss", loss1.item(), on_step=True, on_epoch=True, prog_bar=True)
         
@@ -700,7 +639,6 @@ class RegressionPLModel(pl.LightningModule):
 
         return {"loss": loss1}
 
-
     def validation_step(self, batch, batch_idx):
         x,y,xyxys= batch
         batch_size = x.size(0)
@@ -710,28 +648,30 @@ class RegressionPLModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=4,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            pred_patch = F.interpolate(y_preds[i].unsqueeze(0).float(),size=(self.hparams.size, self.hparams.size),mode='bilinear',align_corners=False).squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += pred_patch
+            # self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=4,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)
         return {"loss": loss1}
 
-    
     def on_validation_epoch_end(self):
+        print(self.mask_pred.shape)
         self.mask_pred = np.divide(self.mask_pred, self.mask_count, out=np.zeros_like(self.mask_pred), where=self.mask_count!=0)
+       
         wandb_logger.log_image(key="masks", images=[np.clip(self.mask_pred,0,1)], caption=["probs"])
 
         #reset mask
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
-
+    
     def configure_optimizers(self):
 
         optimizer = AdamW(self.parameters(), lr=CFG.lr)
         # scheduler =torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-4,pct_start=0.15, steps_per_epoch=self.hparams.total_steps, epochs=50,final_div_factor=1e2)
         scheduler = get_scheduler(CFG, optimizer)
         return [optimizer],[scheduler]
-
 
 
 class GradualWarmupSchedulerV2(GradualWarmupScheduler):
@@ -763,7 +703,7 @@ def get_scheduler(cfg, optimizer):
         optimizer,
         start_factor=1.0,   # start at the current learning rate
         end_factor=0.05,    # end at 1% of the current learning rate
-        total_iters=20     # over 20 epochs or iterations
+        total_iters=50     # over 20 epochs or iterations
     )
     scheduler = GradualWarmupSchedulerV2(
         optimizer, multiplier=1.0, total_epoch=4, after_scheduler=scheduler_linear)
@@ -773,53 +713,41 @@ def get_scheduler(cfg, optimizer):
 def scheduler_step(scheduler, avg_val_loss, epoch):
     scheduler.step(epoch)
 
-import matplotlib.pyplot as plt
-
 torch.cuda.empty_cache()
-
+print(CFG.valid_id)
 fragment_id = CFG.valid_id
 
 valid_mask_gt = cv2.imread(CFG.comp_dataset_path + f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
-pred_shape=valid_mask_gt.shape
-pred_shape = tuple(s // 2 for s in valid_mask_gt.shape)
+valid_mask_gt = cv2.resize(valid_mask_gt, (valid_mask_gt.shape[1]//2, valid_mask_gt.shape[0]//2), interpolation=cv2.INTER_AREA)
+# pad0 = (CFG.size - valid_mask_gt.shape[0] % CFG.size)
+# pad1 = (CFG.size - valid_mask_gt.shape[1] % CFG.size)
+# valid_mask_gt = np.pad(valid_mask_gt, [(0, pad0), (0, pad1)], constant_values=0)
 
-# torch.set_float32_matmul_precision('high')
+pred_shape=valid_mask_gt.shape
+torch.set_float32_matmul_precision('medium')
 
 fragments=[CFG.valid_id]
-# fragments=['vals42']
+print('Fragments: ', fragments) 
 
-for lr in [3e-5]:
-    for batch_size in [15]:
+for lr in [1e-4,2e-6,1e-4]:
+
         # CFG.lr=lr
-        # CFG.train_batch_size=batch_size
-        
-        print('lr: ',lr)
-        print('batch_size: ',batch_size)
 
         enc_i,enc,fold=0,'i3d',0
         for fid in fragments:
             CFG.valid_id=fid
             fragment_id = CFG.valid_id
 
-            valid_mask_gt = cv2.imread(CFG.comp_dataset_path + f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
-
             pred_shape=valid_mask_gt.shape
-            if (any(sub in fragment_id for sub in ["frag", "rect","remaining","202"])):
-
-                pred_shape = tuple(s //1 for s in valid_mask_gt.shape)
-            else:
-                pred_shape = tuple(s //1 for s in valid_mask_gt.shape)
 
             train_images, train_masks, valid_images, valid_masks, valid_xyxys = get_train_valid_dataset()
             print(len(train_images))
 
             valid_xyxys = np.stack(valid_xyxys)
-
-            s4_slice = valid_images[50] # example reference (1, H, W)
             
             train_dataset = CustomDataset(
                 train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG),
-                reference_image=s4_slice, do_hist_match=False
+                reference_image=None, do_hist_match=False
             )
             
             valid_dataset = CustomDataset(
@@ -836,42 +764,6 @@ for lr in [3e-5]:
                                         num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
             
             print('Trainloader lenth: ',len(train_loader))
-            
-        
-            # for batch in train_loader:
-            #     images, masks = batch
-            #     break
-
-            # # Pick first sample in the batch
-            # image = images[0] 
-            # mask = masks[0]
-
-            # # Convert to NumPy
-            # image_np = image.squeeze().cpu().numpy()
-            # mask_np = mask.squeeze().cpu().numpy()
-            # print("Image shape:", image_np.shape, "Mask shape:", mask_np.shape)
-
-            # # Choose slice 12 if depth exists (e.g. shape (D, H, W))
-            # if image_np.ndim == 3:
-            #     image_np = image_np[12]  # Depth slice
-            # if mask_np.ndim == 3:
-            #     mask_np = mask_np[12]
-
-            # # Plot and save
-            # plt.figure(figsize=(12, 5))
-            # plt.subplot(1, 2, 1)
-            # plt.imshow(image_np, cmap='gray')
-            # plt.title("Image (after hist match if applied)")
-            # plt.axis('off')
-
-            # plt.subplot(1, 2, 2)
-            # plt.imshow(mask_np, cmap='gray')
-            # plt.title("Mask")
-            # plt.axis('off')
-
-            # plt.tight_layout()
-            # plt.savefig("sample_from_loader.png", dpi=300)
-            # plt.close()  # Close the figure to free memory
 
             run_slug=f'RESNET_{CFG.frags}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}'
 
@@ -879,17 +771,16 @@ for lr in [3e-5]:
             norm=fold==1
             model=RegressionPLModel(enc='resnet101',pred_shape=pred_shape,size=CFG.size,total_steps=len(train_loader))
             
-            # # DION
-            # checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/f15_div2_l15-35_20231210132040_0_fr_i3depoch=11-v4.ckpt", map_location="cpu", weights_only=False)
+            # # # DION
+            # checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/f15_div2_l15-35_20231210132040_0_fr_i3depoch=15.ckpt", map_location="cpu", weights_only=False)
             # model.load_state_dict(checkpoint["state_dict"], strict=True)
-            
-            
+
             print('FOLD : ',fold)
             wandb_logger.watch(model, log="all", log_freq=100)
             multiplicative = lambda epoch: 0.9
 
             trainer = pl.Trainer(
-                max_epochs=50,
+                max_epochs=21,
                 accelerator="gpu",
                 devices=-1,
                 check_val_every_n_epoch=4,

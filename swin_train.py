@@ -52,31 +52,30 @@ class CFG:
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 24
-    in_chans = 16
+    start_idx = 15
+    in_chans = 30
     
     size = 224
     tile_size = 224
-    stride = tile_size // 8 
+    stride = tile_size // 8
     
-    train_batch_size =  10 # 32
-    valid_batch_size = 10
-    
-    lr = 1e-4
+    train_batch_size =  12 # 32
+    valid_batch_size = 12
+    lr = 2e-5
     num_workers = 8
     # ============== model cfg =============
     scheduler = 'linear' # 'cosine', 'linear'
-    epochs = 50
+    epochs = 25
     warmup_factor = 10
     
     # Size of fragments
-    frags_ratio1 = ["rem",'rect','frag','202','s4']
-    frags_ratio2 = ['nothing']
+    frags_ratio1 = ['frag']
+    frags_ratio2 = ['202']
     ratio1 = 2
     ratio2 = 1
     
     # ============== fold =============
-    segments = ['frag5', '20231210132040'] 
+    segments = ['frag5','20231210132040'] 
     valid_id = '20231210132040'
     # ============== fixed =============
     min_lr = 1e-7
@@ -134,68 +133,79 @@ if wandb.run is not None:
         
 utils.cfg_init(CFG)
 torch.set_float32_matmul_precision('medium')
+for ratio2 in [1]:
+    for lr in [2e-5]:
+        for inchans in [30]:
+            for frags in [['frag1','frag5','20231210132040'],['frag5','frag6','20231210132040'],['frag5','20231210132040']]:
+                CFG.segments = frags
+                CFG.lr = lr
+                CFG.in_chans = inchans
+                CFG.ratio2 = ratio2
+                if inchans ==16:
+                    CFG.train_batch_size=15
+                    CFG.valid_batch_size=15
+                    CFG.start_idx=22
+                elif inchans==30:
+                    CFG.train_batch_size=12
+                    CFG.valid_batch_size=12
+                    CFG.start_idx=15
 
-# for i in [15,20,25]:
-# CFG.start_idx = i
-fragment_id = CFG.valid_id
-run_slug=f'SWIN_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}'
-valid_mask_gt = cv2.imread(f"{CFG.segment_path}{fragment_id}/{fragment_id}_inklabels.png", 0)
+                fragment_id = CFG.valid_id
+                run_slug=f'SWIN_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}'
+                valid_mask_gt = cv2.imread(f"{CFG.segment_path}{fragment_id}/{fragment_id}_inklabels.png", 0)
+                if (any(sub in fragment_id for sub in CFG.frags_ratio1)):
+                    valid_mask_gt = cv2.resize(valid_mask_gt, (valid_mask_gt.shape[1]//CFG.ratio1, valid_mask_gt.shape[0]//CFG.ratio1), interpolation=cv2.INTER_AREA)
+                elif (any(sub in fragment_id for sub in CFG.frags_ratio2)):
+                    valid_mask_gt = cv2.resize(valid_mask_gt, (valid_mask_gt.shape[1]//CFG.ratio2, valid_mask_gt.shape[0]//CFG.ratio2), interpolation=cv2.INTER_AREA)
 
-pred_shape=valid_mask_gt.shape
-if (any(sub in fragment_id for sub in CFG.frags_ratio1)):
-    pred_shape = tuple(s // CFG.ratio1 for s in valid_mask_gt.shape)
-elif (any(sub in fragment_id for sub in CFG.frags_ratio2)):
-    pred_shape = tuple(s // CFG.ratio2 for s in valid_mask_gt.shape)
-else:
-    pass
+                pred_shape=valid_mask_gt.shape
 
+                train_images, train_masks, valid_images, valid_masks, valid_xyxys = utils.get_train_valid_dataset(CFG)
 
-train_images, train_masks, valid_images, valid_masks, valid_xyxys = utils.get_train_valid_dataset(CFG)
+                print('train_images',train_images[0].shape)
+                print("Length of train images:", len(train_images))
 
-print('train_images',train_images[0].shape)
-print("Length of train images:", len(train_images))
+                valid_xyxys = np.stack(valid_xyxys)
+                train_dataset = swin.TimesformerDataset(
+                    train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG))
+                valid_dataset = swin.TimesformerDataset(
+                    valid_images, CFG, xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG))
 
-valid_xyxys = np.stack(valid_xyxys)
-train_dataset = swin.TimesformerDataset(
-    train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG))
-valid_dataset = swin.TimesformerDataset(
-    valid_images, CFG, xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG))
+                train_loader = DataLoader(train_dataset,
+                                            batch_size=CFG.train_batch_size,
+                                            shuffle=True,
+                                            num_workers=CFG.num_workers, pin_memory=True, drop_last=True,
+                                            )
+                valid_loader = DataLoader(valid_dataset,
+                                            batch_size=CFG.valid_batch_size,
+                                            shuffle=False,
+                                            num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
 
-train_loader = DataLoader(train_dataset,
-                            batch_size=CFG.train_batch_size,
-                            shuffle=True,
-                            num_workers=CFG.num_workers, pin_memory=True, drop_last=True,
-                            )
-valid_loader = DataLoader(valid_dataset,
-                            batch_size=CFG.valid_batch_size,
-                            shuffle=False,
-                            num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
+                print(f"Train loader length: {len(train_loader)}")
+                print(f"Valid loader length: {len(valid_loader)}")
 
-print(f"Train loader length: {len(train_loader)}")
-print(f"Valid loader length: {len(valid_loader)}")
+                wandb_logger = WandbLogger(project="vesivus", name=run_slug)  
+                wandb.finish()
+                model = swin.SwinModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger)
+                wandb_logger.watch(model, log="all", log_freq=50)
 
-wandb_logger = WandbLogger(project="vesivus", name=run_slug)  
+                # model = swin.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/SWIN_['remaining5', 'rect5']_valid=rect5_size=64_lr=0.0001_in_chans=20_epoch=5-v1.ckpt")
+                trainer = pl.Trainer(
+                    max_epochs=CFG.epochs,
+                    accelerator="gpu",
+                    check_val_every_n_epoch=4,
+                    devices=-1,
+                    logger=wandb_logger,
+                    default_root_dir="./modelss",
+                    accumulate_grad_batches=1,
+                    precision='16-mixed',
+                    gradient_clip_val=1.0,
+                    gradient_clip_algorithm="norm",
+                    strategy='ddp_find_unused_parameters_true',
+                    # callbacks=[ModelCheckpoint(filename=f'{run_slug}_'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
+                    # ]
 
-model = swin.SwinModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger)
-wandb_logger.watch(model, log="all", log_freq=50)
-
-# model = swin.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/SWIN_['20231210132040', 'vals42']_valid=vals42_size=224_lr=0.0001_in_chans=16_epoch=7.ckpt")
-trainer = pl.Trainer(
-    max_epochs=CFG.epochs,
-    accelerator="gpu",
-    check_val_every_n_epoch=4,
-    devices=-1,
-    logger=wandb_logger,
-    default_root_dir="./modelss",
-    accumulate_grad_batches=1,
-    precision='16-mixed',
-    gradient_clip_val=1.0,
-    gradient_clip_algorithm="norm",
-    strategy='ddp_find_unused_parameters_true',
-    callbacks=[ModelCheckpoint(filename=f'{run_slug}_'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
-    ]
-
-)
-# trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
-trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
-wandb.finish()
+                )
+                # trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
+                trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+                wandb.finish()

@@ -64,7 +64,6 @@ def read_image_mask(fragment_id, CFG=None):
         
     images = np.stack(images, axis=2)
     print(f" Shape of {fragment_id} segment: {images.shape}")
-    
     # if (any(sub in fragment_id for sub in CFG.frags_ratio1)):
     #     scale_factor = 1 / CFG.ratio1
     #     if isinstance(images, np.ndarray):
@@ -154,21 +153,24 @@ def get_train_valid_dataset(CFG=None):
         for a in y1_list:
             for b in x1_list:
                 if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size] == 0):
-                    # if fragment_id == 'vals42':
-                    #     for yi in range(0, CFG.tile_size, CFG.size):
-                    #         for xi in range(0, CFG.tile_size, CFG.size):
-                    #             y1 = a + yi
-                    #             x1 = b + xi
-                    #             y2 = y1 + CFG.size
-                    #             x2 = x1 + CFG.size
-                    #             if fragment_id != CFG.valid_id:
+                    
+                    # if fragment_id =='s4':
+                    #     # if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.95):
+                    #         for yi in range(0, CFG.tile_size, CFG.size):
+                    #             for xi in range(0, CFG.tile_size, CFG.size):
+                    #                 y1 = a + yi
+                    #                 x1 = b + xi
+                    #                 y2 = y1 + CFG.size
+                    #                 x2 = x1 + CFG.size
                     #                 tile_mask = mask[y1:y2, x1:x2, None].copy()  # copy the patch
-                    #                 # Set all pixels where mask==0 to 255, keep 1s as is
-                    #                 tile_mask[(tile_mask <1) & (tile_mask>0)] = 255
-                    #                 train_images.append(image[y1:y2, x1:x2])
-                    #                 train_masks.append(tile_mask)
-                    #                 windows_dict[(y1, y2, x1, x2)] = '1'
-                    #                 assert image[y1:y2, x1:x2].shape == (CFG.size, CFG.size, CFG.in_chans)
+                    #                 all_gray = np.all((tile_mask > 0.01) & (tile_mask < 0.99))
+                    #                 if not all_gray:
+                    #                     # Set all pixels where mask==0 to IGNORE INDEX, keep 1s as is
+                    #                     tile_mask[(tile_mask <1) & (tile_mask>0.01)] = 127 # mask
+                    #                     train_images.append(image[y1:y2, x1:x2])
+                    #                     train_masks.append(tile_mask)
+                    #                     windows_dict[(y1, y2, x1, x2)] = '1'
+                    #                     assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
                     if fragment_id == CFG.valid_id or not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size] < 0.05):
                         for yi in range(0, CFG.tile_size, CFG.size):
                             for xi in range(0, CFG.tile_size, CFG.size):

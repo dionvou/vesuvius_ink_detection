@@ -42,6 +42,20 @@ class TimesformerDataset(Dataset):
         self.xyxys=xyxys
         
         self.processor = AutoImageProcessor.from_pretrained("facebook/timesformer-base-finetuned-k600", use_fast=True)
+
+        if isinstance(self.processor.size, dict):
+            proc_size = self.processor.size.get("shortest_edge")
+        else:
+            proc_size = self.processor.size
+
+        if self.cfg.size != proc_size:
+            print(f"Processor size: {self.processor.size}")
+            print(f"Config size: {self.cfg.size}")
+            print('Size does not equal processor size')
+            self.processor.do_resize = False
+            self.processor.do_center_crop = False
+        self.processor.do_normalize = False
+
         self.pil_transform  = pil_transform
         
     def __len__(self):
@@ -68,6 +82,16 @@ class TimesformerDataset(Dataset):
             image_tmp[..., temporal_random_cutout_idx] = 0
         image = image_tmp
         return image
+    
+    def shuffle_d_axis(self,image):
+        # image shape: (H, W, D)
+        d = image.shape[2]
+        shuffled_indices = np.arange(d)
+        np.random.shuffle(shuffled_indices)
+
+        # Reorder along D axis
+        image_shuffled = image[:, :, shuffled_indices]
+        return image_shuffled
 
     def __getitem__(self, idx):
         if self.xyxys is not None: #VALID
@@ -90,6 +114,7 @@ class TimesformerDataset(Dataset):
                 )
             # encoding["pixel_values"] is (1, T, C, H, W)
             pixel_values = encoding["pixel_values"].squeeze(0)
+
             return pixel_values, label,xy
         else:
             image = self.images[idx]
@@ -102,7 +127,8 @@ class TimesformerDataset(Dataset):
             # image=image.transpose(0,2,1)#(c,w,h)
             # image=image.transpose(2,1,0)#(h,w,c)
 
-            # image=self.fourth_augment(image, self.cfg.in_chans)
+            image=self.fourth_augment(image, self.cfg.in_chans)
+            # image = self.shuffle_d_axis(image)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)
@@ -118,8 +144,9 @@ class TimesformerDataset(Dataset):
                 return_tensors='pt'
                 )
             pixel_values = encoding["pixel_values"].squeeze(0)
-            
+
             return pixel_values, label
+        
 class Decoder2D(nn.Module):
     def __init__(self, in_channels, num_classes):
         super().__init__()
@@ -137,15 +164,19 @@ class Decoder2D(nn.Module):
         return x
     
 class SwinModel(pl.LightningModule):
-    def __init__(self, pred_shape, size, lr, scheduler=None,wandb_logger=None):
+    def __init__(self, pred_shape, size, lr, scheduler=None,wandb_logger=None,with_norm=False):
         super(SwinModel, self).__init__()
 
         self.save_hyperparameters()
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
+        self.IGNORE_INDEX = 127
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25)
-        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
+        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
+
+        # self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25)
+        # self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
 
         self.backbone = swin_transformer.swin3d_t(weights="KINETICS400_V1") #KINETICS400_IMAGENET22K_V1 
@@ -171,17 +202,17 @@ class SwinModel(pl.LightningModule):
     #     _ = self.backbone(x)
     #     feat = self.features 
     #     print(feat.shape)
-    #     feat_2d = feat.max(dim=1)[0]  # average temporal patches
+        # feat_2d = feat.max(dim=1)[0]  # average temporal patches
         
 
     def forward(self, x):
+
         x = x.permute(0,2,1,3,4)
         output = self.backbone(x)  # runs backbone, sets self.features
         # feat = self.features  # (B, T_patch, H_patch, W_patch, C)
         # feat_2d = feat.max(dim=1)[0]  # average temporal patches: (B, C, H_patch, W_patch)
         # seg_logits = self.classifier(feat_2d)  # (B, num_classes, 14, 14)
         preds = self.classifier(output)
-        # preds = preds.view(-1,1,28,28)
         preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
         return preds
         # return seg_logits.permute(0,3,1,2)
