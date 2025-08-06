@@ -98,7 +98,6 @@ class TimesformerDataset(Dataset):
                 )
             # encoding["pixel_values"] is (1, T, C, H, W)
             pixel_values = encoding["pixel_values"].squeeze(0)
-
             return pixel_values, label,xy
         else:
             image = self.images[idx]
@@ -183,9 +182,7 @@ class TimesfomerModel(pl.LightningModule):
         self.classifier = nn.Sequential(
             nn.Linear(768, (self.hparams.size//16)**2),  
         )
-        
-        if self.hparams.with_norm:
-            self.normalization=nn.BatchNorm3d(num_features=16)           
+                
 
         # self.classifier = nn.Sequential(
         #     nn.Linear(768, 1),  

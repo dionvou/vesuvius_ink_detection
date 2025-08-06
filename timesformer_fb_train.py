@@ -68,7 +68,7 @@ class CFG:
     ratio2 = 1
     
     # ============== fold =============
-    segments = ['frag5','s4','20231210132040'] 
+    segments = ['frag1','20231210132040'] 
     valid_id = '20231210132040'
     
     # ============== model cfg =============
@@ -106,18 +106,18 @@ class CFG:
                 ], p=0.4),
         A.CoarseDropout(max_holes=2, max_width=int(size * 0.2), max_height=int(size * 0.2), 
                         mask_fill_value=0, p=0.5),
-        A.Normalize(
-            mean= [0] * in_chans,
-            std= [1] * in_chans
-        ),
+        # A.Normalize(
+        #     mean= [0] * in_chans,
+        #     std= [1] * in_chans
+        # ),
         ToTensorV2(transpose_mask=True),
     ]
 
     valid_aug_list = [
-        A.Normalize(
-            mean= [0] * in_chans,
-            std= [1] * in_chans
-        ),
+        # A.Normalize(
+        #     mean= [0] * in_chans,
+        #     std= [1] * in_chans
+        # ),
         ToTensorV2(transpose_mask=True),  
     ]
     

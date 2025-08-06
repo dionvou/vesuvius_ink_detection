@@ -24,24 +24,30 @@ from transformers import SegformerForSemanticSegmentation
 from torchvision.models.video import swin_transformer
 import albumentations as A
 
-
-# Convert to PIL and then to 3 channels
+# # Convert to PIL and then to 3 channels
 pil_transform = T.Compose([
     T.ToPILImage(),                    # convert (C, H, W) to PIL
     T.Grayscale(num_output_channels=3),  # convert to 3 channels
 ])
-
 class TimesformerDataset(Dataset):
     def __init__(self, images, cfg, xyxys=None, labels=None, transform=None):
         self.images = images
         self.cfg = cfg
         self.labels = labels
-        
         self.transform = transform
         self.rotate = A.Compose([A.Rotate(8,p=1)])
         self.xyxys=xyxys
         
+        
+        # self.video_transform = T.Compose([
+        #     T.ConvertImageDtype(torch.float32),  # scales to [0.0, 1.0]
+        #     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        # ])
         self.processor = AutoImageProcessor.from_pretrained("facebook/timesformer-base-finetuned-k600", use_fast=True)
+        # print("Using Timesformer processor with image size:", self.processor)
+        self.pil_transform  = pil_transform
+        # print("Model preprocess: ",swin_transformer.Swin3D_S_Weights.KINETICS400_V1.transforms)
+        # self.processor = AutoImageProcessor.from_pretrained("facebook/timesformer-base-finetuned-k600", use_fast=True)
 
         if isinstance(self.processor.size, dict):
             proc_size = self.processor.size.get("shortest_edge")
@@ -55,15 +61,19 @@ class TimesformerDataset(Dataset):
             self.processor.do_resize = False
             self.processor.do_center_crop = False
         self.processor.do_normalize = False
-
-        self.pil_transform  = pil_transform
-        
+        # self.processor.do_resize = False
+        # self.processor.do_center_crop = False
+        # self.processor.do_rescale = False
+        # self.channel_tranform  = T.Compose([
+        #     T.Grayscale(num_output_channels=3),  # convert to 3 channels
+        # ])
+                
     def __len__(self):
         return len(self.images)
     
     def fourth_augment(self,image, in_chans=16):
         image_tmp = np.zeros_like(image)
-        cropping_num = random.randint(in_chans-6, in_chans)
+        cropping_num = random.randint(in_chans-5, in_chans)
 
         start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
         crop_indices = np.arange(start_idx, start_idx + cropping_num)
@@ -103,19 +113,20 @@ class TimesformerDataset(Dataset):
                 image = data['image'].unsqueeze(0)
                 label = data['mask']
                 label=F.interpolate(label.unsqueeze(0),(self.cfg.size//16,self.cfg.size//16)).squeeze(0)
-            
             image = image.permute(1,0,2,3)
             frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
 
-            # now run the Timesformer processor ONCE:
             encoding = self.processor(
                 [frame for frame in frames],   # list of PIL
                 return_tensors='pt'
                 )
-            # encoding["pixel_values"] is (1, T, C, H, W)
             pixel_values = encoding["pixel_values"].squeeze(0)
-
             return pixel_values, label,xy
+            # image = image.permute(1,0,2,3)
+            # image = image.repeat(1, 3, 1, 1)
+            # image = torch.stack([self.video_transform(f) for f in image]) # list of frames
+            # return image, label,xy
+            
         else:
             image = self.images[idx]
             label = self.labels[idx]
@@ -135,7 +146,6 @@ class TimesformerDataset(Dataset):
                 image = data['image'].unsqueeze(0)
                 label = data['mask']
                 label=F.interpolate(label.unsqueeze(0),(self.cfg.size//16,self.cfg.size//16)).squeeze(0)
-                
             image = image.permute(1,0,2,3)
             frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
 
@@ -144,27 +154,16 @@ class TimesformerDataset(Dataset):
                 return_tensors='pt'
                 )
             pixel_values = encoding["pixel_values"].squeeze(0)
-
+            
             return pixel_values, label
+            # print(image.shape)
+            # image = image.permute(1,0,2,3)
+            # image = image.repeat(1, 3, 1, 1)
+            # image = torch.stack([self.video_transform(f) for f in image]) # list of frames
+            # return image, label
         
-class Decoder2D(nn.Module):
-    def __init__(self, in_channels, num_classes):
-        super().__init__()
-        self.up1 = nn.ConvTranspose2d(in_channels, 256, kernel_size=4, stride=4)
-        self.bn1 = nn.BatchNorm2d(256)
-        # self.up2 = nn.ConvTranspose2d(256, 64, kernel_size=4, stride=4)
-        # self.bn2 = nn.BatchNorm2d(64)
-        self.conv_out = nn.Conv2d(256, num_classes, kernel_size=1)
-
-    def forward(self, x):
-        x = F.relu(self.bn1(self.up1(x)))  # upsample 7 -> 28
-        # x = F.relu(self.bn2(self.up2(x)))  # upsample 28 -> 112
-        # x = F.interpolate(x, scale_factor=4, mode='bilinear', align_corners=False)  # 112 -> 224
-        x = self.conv_out(x)
-        return x
-    
 class SwinModel(pl.LightningModule):
-    def __init__(self, pred_shape, size, lr, scheduler=None,wandb_logger=None,with_norm=False):
+    def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
         super(SwinModel, self).__init__()
 
         self.save_hyperparameters()
@@ -172,50 +171,53 @@ class SwinModel(pl.LightningModule):
         self.mask_count = np.zeros(self.hparams.pred_shape)
         self.IGNORE_INDEX = 127
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary', ignore_index=self.IGNORE_INDEX)
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
 
-        # self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25)
-        # self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
 
-        self.backbone = swin_transformer.swin3d_t(weights="KINETICS400_V1") #KINETICS400_IMAGENET22K_V1 
+        self.backbone = swin_transformer.swin3d_b(weights="KINETICS400_IMAGENET22K_V1") #KINETICS400_IMAGENET22K_V1
+        # if freeze:
+        #     for param in self.backbone.parameters():
+        #         param.requires_grad = False
+
+        embed_dim = self.backbone.head.in_features  # works before replacing with Identity()
         self.backbone.head = nn.Identity()
-        self.decoder = Decoder2D(in_channels=512, num_classes=1)
+
+        self.classifier = nn.Sequential(
+            nn.Linear(embed_dim, (self.hparams.size // 16) ** 2)
+        )
+        self.dropout = nn.Dropout(p=0.2)
         # self.classifier = nn.Sequential(
         #     nn.Linear(384, 1),  
         # )
-        self.classifier = nn.Sequential(
-            nn.Linear(768, (self.hparams.size//16)**2),  
-        )
+    
 
-        self.features = None
+        # self.features = None
         # self.hook_handle = self.backbone.features[-1].register_forward_hook(self._hook_fn)
-        self.hook_handle = self.backbone.features[4].register_forward_hook(self._hook_fn)
+        # self.hook_handle = self.backbone.features[4].register_forward_hook(self._hook_fn)
         # self.hook_handle = self.backbone.norm.register_forward_hook(self._hook_fn)
+        # 
+    # def _hook_fn(self, module, input, output):
+    #     self.features = output
         
-    def _hook_fn(self, module, input, output):
-        self.features = output
-        
+
     # def forward(self, x):
-    #     # x = x.permute(0,2,1,3,4)  # (B, T_patch, H_patch, W_patch, C) -> (B, C, T_patch, H_patch, W_patch)
-    #     _ = self.backbone(x)
-    #     feat = self.features 
-    #     print(feat.shape)
-        # feat_2d = feat.max(dim=1)[0]  # average temporal patches
-        
+    #     x = x.permute(0,2,1,3,4)
+    #     _ = self.backbone(x)  # runs backbone, sets self.features
+    #     feat = self.features  # (B, T_patch, H_patch, W_patch, C)
+    #     feat_2d = feat.max(dim=1)[0]  # average temporal patches: (B, C, H_patch, W_patch)
+    #     seg_logits = self.classifier(feat_2d)  # (B, num_classes, 14, 14)
+        # return seg_logits.permute(0,3,1,2)
 
     def forward(self, x):
 
         x = x.permute(0,2,1,3,4)
         output = self.backbone(x)  # runs backbone, sets self.features
-        # feat = self.features  # (B, T_patch, H_patch, W_patch, C)
-        # feat_2d = feat.max(dim=1)[0]  # average temporal patches: (B, C, H_patch, W_patch)
-        # seg_logits = self.classifier(feat_2d)  # (B, num_classes, 14, 14)
+        # output = self.dropout(output)
         preds = self.classifier(output)
         preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
         return preds
-        # return seg_logits.permute(0,3,1,2)
    
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -246,20 +248,75 @@ class SwinModel(pl.LightningModule):
         return {"loss": loss1}
     
     def configure_optimizers(self):
-        # Separate the head parameters
-        head_params = list(self.decoder.parameters())
-        other_params = [p for n, p in self.backbone.named_parameters() if "decoder" not in n]
+        weight_decay = 0.0  # or use self.hparams.weight_decay
+
+        # Separate the classifier (head) and backbone (other) parameters
+        head_params = list(self.classifier.parameters())
+        other_params = [p for n, p in self.backbone.named_parameters() if "classifier" not in n]
+
+        # Define param groups with different learning rates
+        base_lr = self.hparams.lr
 
         param_groups = [
-            {'params': other_params, 'lr': self.hparams.lr},
-            {'params': head_params, 'lr': self.hparams.lr*10 },  # 10x LR for the head
+            {
+                'params': other_params,
+                'lr': base_lr,
+                'weight_decay': weight_decay
+            },
+            {
+                'params': head_params,
+                'lr': base_lr ,  # 100x multiplier for the head
+                'weight_decay': weight_decay
+            },
         ]
 
+        # Optimizer
         optimizer = AdamW(param_groups)
-    
-        scheduler = get_scheduler(optimizer,scheduler=self.hparams.scheduler)
-        return [optimizer], [scheduler]
+        scheduler= get_scheduler(optimizer,scheduler='cosine')
+        # # Scheduler with per-group max_lr
+        # scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        #     optimizer,
+        #     max_lr=[base_lr, base_lr * 10],  # 👈 match param group order!
+        #     total_steps=64*25,
+        #     pct_start=0.1,
+        #     anneal_strategy='cos',
+        #     final_div_factor=1e2,
+        #     cycle_momentum=False,
+        # )
 
+        return [optimizer], [{"scheduler": scheduler, "interval": "step"}]
+
+    # def configure_optimizers(self):
+    #     weight_decay = 0.01#self.hparams.weight_decay if hasattr(self.hparams, 'weight_decay') else 0.01
+
+    #     # Separate the head parameters
+    #     head_params = list(self.classifier.parameters())
+    #     other_params = [p for n, p in self.backbone.named_parameters() if "classifier" not in n]
+
+    #     param_groups = [
+    #         {
+    #             'params': other_params,
+    #             'lr': self.hparams.lr,
+    #             'weight_decay': weight_decay
+    #         },
+    #         {
+    #             'params': head_params,
+    #             'lr': self.hparams.lr * 200,
+    #             'weight_decay': weight_decay
+    #         },
+    #     ]
+
+    #     optimizer = AdamW(param_groups)
+    #     scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    #         optimizer,
+    #         max_lr=[group['lr'] for group in optimizer.param_groups],
+    #         total_steps=780,
+    #         pct_start=0.1,       # 10% warmup
+    #         anneal_strategy='cos',  # Cosine decay after warmup
+    #         cycle_momentum=False  # Turn off momentum scheduling (common for AdamW)
+    #     )
+    #     # scheduler = get_scheduler(optimizer, scheduler=self.hparams.scheduler)
+    #     return [optimizer], [scheduler]
         
     def on_validation_epoch_end(self):
         mask_pred_tensor = torch.tensor(self.mask_pred, dtype=torch.float32, device=self.device)
@@ -278,9 +335,7 @@ class SwinModel(pl.LightningModule):
                 out=np.zeros_like(mask_pred_np),
                 where=mask_count_np != 0
             )
-            # self.logger.experiment.log({
-            #     "masks": [wandb.Image(np.clip(final_mask, 0, 1), caption="probs")]
-            # })
+
             self.hparams.wandb_logger.log_image(key="masks", images=[np.clip(final_mask, 0, 1)], caption=["probs"])
 
         self.mask_pred = np.zeros(self.hparams.pred_shape)
@@ -344,19 +399,40 @@ class GradualWarmupSchedulerV2(GradualWarmupScheduler):
         else:
             return [base_lr * ((self.multiplier - 1.) * self.last_epoch / self.total_epoch + 1.) for base_lr in self.base_lrs]
 
-def get_scheduler(optimizer, scheduler=None, epochs=40):
-    if scheduler == 'cosine':
+def get_scheduler(optimizer, scheduler=None, epochs=40, steps_per_epoch=10):
+#     if scheduler == 'cosine':
+#         scheduler_after = torch.optim.lr_scheduler.CosineAnnealingLR(
+#             optimizer, 40, eta_min=1e-6)
+#     else:
+#         scheduler_after = torch.optim.lr_scheduler.LinearLR(
+#             optimizer,
+#             start_factor=1.0,   # start at the current learning rate
+#             end_factor=0.05,    # end at 1% of the current learning rate
+#             total_iters = epochs
+#         )
+#     scheduler = GradualWarmupSchedulerV2(
+#         optimizer, multiplier=1.0, total_epoch=4, after_scheduler=scheduler_after)
+#     return scheduler
+    if scheduler == "onecycle":
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=[group['lr'] for group in optimizer.param_groups],
+            total_steps=epochs * 50,
+            pct_start=0.1,       # 10% warmup
+            anneal_strategy='cos',  # Cosine decay after warmup
+            cycle_momentum=False  # Turn off momentum scheduling (common for AdamW)
+        )
+    elif scheduler == 'cosine':
         scheduler_after = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, 40, eta_min=1e-6)
+            optimizer, epochs, eta_min=1e-6)
+        scheduler = GradualWarmupSchedulerV2(
+            optimizer, multiplier=1.0, total_epoch=4, after_scheduler=scheduler_after)
     else:
         scheduler_after = torch.optim.lr_scheduler.LinearLR(
-            optimizer,
-            start_factor=1.0,   # start at the current learning rate
-            end_factor=0.05,    # end at 1% of the current learning rate
-            total_iters = epochs
-        )
-    scheduler = GradualWarmupSchedulerV2(
-        optimizer, multiplier=1.0, total_epoch=4, after_scheduler=scheduler_after)
+            optimizer, start_factor=1.0, end_factor=0.05, total_iters=epochs)
+        scheduler = GradualWarmupSchedulerV2(
+            optimizer, multiplier=1.0, total_epoch=4, after_scheduler=scheduler_after)
+
     return scheduler
 
 def scheduler_step(scheduler, avg_val_loss, epoch):

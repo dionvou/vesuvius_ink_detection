@@ -20,6 +20,7 @@ import pandas as pd
 import wandb
 
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import OneCycleLR
 
 import pandas as pd
 import os
@@ -70,24 +71,24 @@ class CFG:
     exp_name = 'pretraining_all'
     
     # ============== model cfg =============
-    frags = ['frag5','20231210132040']
-    valid_id = '20231210132040'#'20240304141530'#'20231210132040'
+    frags = ['frag1','20231215151901']
+    valid_id = '20231215151901'#'20240304141530'#'20231210132040'
     backbone='resnet3d'
     # ============== training cfg =============
     size = 256
     tile_size = 256
     stride = tile_size // 8
 
-    train_batch_size =  20
-    valid_batch_size = 20
+    train_batch_size =  25
+    valid_batch_size = 25
 
     scheduler = 'GradualWarmupSchedulerV2'
     
-    start_idx = 22
-    in_chans = 16
+    start_idx = 15
+    in_chans = 30
     
     epochs = 30 # 30
-    lr = 1.2e-5
+    lr = 2e-6
     # ============== fold =============
     
 
@@ -117,14 +118,10 @@ class CFG:
         # A.RandomResizedCrop(
         #     size, size, scale=(0.7, 1.0)),
         A.Resize(size, size),
-        A.RandomResizedCrop(
-            size, size, scale=(0.3, 1.0)),
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
-        # A.RandomRotate90(p=0.6),
-
         A.RandomBrightnessContrast(p=0.75),
-        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.1,p=0.75),
+        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.15,p=0.75),
         A.OneOf([
                 A.GaussNoise(var_limit=[10, 50]),
                 A.GaussianBlur(),
@@ -207,22 +204,23 @@ def read_image_mask(fragment_id, start_idx, in_chans):
             image = cv2.imread(f"train_scrolls/{fragment_id}/layers/{i:02}.tif", 0)
             # print(image.dtype)  # Should say uint16 if it's 16-bit
             # print(image.max())  # Should go up to ~65535
+        else:
         # elif  os.path.exists(jpg_path):
         #     image = cv2.imread(f"train_scrolls/{fragment_id}/layers/{i:02}.jpg", 0)
         # else:
-        #     image = cv2.imread(f"train_scrolls/{fragment_id}/layers/{i:02}.png", 0)
+            image = cv2.imread(f"train_scrolls/{fragment_id}/layers/{i:02}.png", 0)
 
         # if (any(sub in fragment_id for sub in  ["frag", "rect", "remaining","202","left"])):
         #     image = cv2.resize(image, (image.shape[1]//2,image.shape[0]//2), interpolation = cv2.INTER_AREA)
         # else:
         #     image = cv2.resize(image, (image.shape[1]//1,image.shape[0]//1), interpolation = cv2.INTER_AREA)
             # Resize safely if required
-        if any(sub in fragment_id for sub in ["frag"]):
-            new_h, new_w = image.shape[0]//2, image.shape[1]//2  #5 height, width order corrected
+        if any(sub in fragment_id for sub in ["Frag"]):
+            new_h, new_w = image.shape[0]//1, image.shape[1]//1  #5 height, width order corrected
         else:
             new_h, new_w = image.shape[0]//2, image.shape[1]//2
         # # HERE RESIZE
-        # new_h, new_w = image.shape[0] // 2, image.shape[1] // 2  # height, width order corrected
+        # new_h, new_w = image.shape[0] //2, image.shape[1] //2  # height, width order corrected
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
         image_shape = (image.shape[1], image.shape[0])
@@ -241,30 +239,6 @@ def read_image_mask(fragment_id, start_idx, in_chans):
     
     # if fragment_id == 'left':
     # images=images[:,:,::-1]
-
-    # scale_factor = 1 / 2
-    # if isinstance(images, np.ndarray):
-    #     images = torch.from_numpy(images).float()  # Ensure float32 type
-
-    # # Add batch & channel dimension: (1, 1, D, H, W)
-    # images = images.unsqueeze(0).unsqueeze(0)
-
-    # # Resize with trilinear interpolation
-    # resized = F.interpolate(images, scale_factor=scale_factor, mode='trilinear', align_corners=False)
-
-    # # Remove extra dimensions: (D/2, H/2, W/2)
-    # images = resized.squeeze().numpy()
-    # if (any(sub in fragment_id for sub in ["s30"])):
-    #     # Assume tensor shape is (H, W, D)
-    #     tensor = torch.tensor(images).float()
-    #     tensor = tensor.permute(2, 0, 1)  # (D, H, W)
-    #     tensor = tensor.unsqueeze(0).unsqueeze(0)      # (1, D, H, W)
-
-    #     # Resize depth dimension (now dim=1) by a factor of 2
-    #     tensor_resized = F.interpolate(tensor, scale_factor=(2, 1, 1), mode='trilinear', align_corners=False)
-
-    #     # Reshape back to (H, W, 2*D)
-    #     images = tensor_resized.squeeze().permute(1, 2, 0).numpy()  # (H, W, 2D)
 
     mask = cv2.imread( f"train_scrolls/{fragment_id}/{fragment_id}_inklabels.png", 0)
     
@@ -365,7 +339,7 @@ class CustomDataset(Dataset):
         self.labels = labels
         
         self.transform = transform
-        self.reference_image = reference_image  # shape: (1, H, W)
+        self.reference_image = reference_image  # shape: (d, H, W)
         self.do_hist_match = do_hist_match
         self.xyxys=xyxys
         self.rotate=CFG.rotate
@@ -390,8 +364,8 @@ class CustomDataset(Dataset):
 
         image_tmp[..., start_paste_idx : start_paste_idx + cropping_num] = image[..., crop_indices]
 
-        # if random.random() > 0.4:
-        #     image_tmp[..., temporal_random_cutout_idx] = 0
+        if random.random() > 0.4:
+            image_tmp[..., temporal_random_cutout_idx] = 0
         image = image_tmp
         return image
     
@@ -491,19 +465,13 @@ class RegressionPLModel(pl.LightningModule):
             n_input_channels=1,
             forward_features=True,
             n_classes=1039  # This can be dummy if only using features
-        )
-        # state_dict=torch.load('./checkpoints/pretraining_50epoch=149.ckpt', weights_only=False)["state_dict"]
-    
+        )    
         state_dict=torch.load('./checkpoints/r3d101_KM_200ep.pth')["state_dict"]
-        # state_dict = {
-        #     k.replace("backbone.", ""): v
-        #     for k, v in state_dict.items()
-        #     if k.startswith("backbone.")
-        # }
+
         conv1_weight = state_dict['conv1.weight']
         state_dict['conv1.weight'] = conv1_weight.sum(dim=1, keepdim=True)
         load_result = self.backbone.load_state_dict(state_dict, strict=False)
-        # Optional: Check for missing/unexpected keys
+        
         if load_result.missing_keys or load_result.unexpected_keys:
             print("⚠️ Loaded with warnings:")
             if load_result.missing_keys:
@@ -514,10 +482,8 @@ class RegressionPLModel(pl.LightningModule):
             print("✅ Backbone weights loaded successfully with no issues.")
             
 
-        # # for param in self.backbone.parameters():
-        # #     param.requires_grad = False
-
-        # self.resnet_to_rgb = nn.Conv2d(1, 3, kernel_size=1)
+        # for param in self.backbone.parameters():
+        #     param.requires_grad = False
 
         # # Segformer expects 2D input with shape (B, C, H, W)
         # self.encoder_2d = SegformerForSemanticSegmentation.from_pretrained(
@@ -587,7 +553,8 @@ class RegressionPLModel(pl.LightningModule):
         #     print("✅ Backbone weights loaded successfully with no issues.")
         # self.backbone.load_state_dict(torch.load('checkpoints/frags_extended4_18chans_20240814211913_0_fr_i3depoch=19.ckpt'),strict=False)
         self.decoder = Decoder(encoder_dims=[x.size(1) for x in self.backbone(torch.rand(1,1,CFG.in_chans,256,256))], upscale=1)
-        # init_weights(self.decoder)
+        init_weights(self.decoder)
+        self.dropout = nn.Dropout(p=0.3)
 
         if self.hparams.with_norm:
             self.normalization=nn.BatchNorm3d(num_features=1)            
@@ -599,10 +566,13 @@ class RegressionPLModel(pl.LightningModule):
         if self.hparams.with_norm:
             x=self.normalization(x)
         feat_maps = self.backbone(x)        
+        # feat_maps = [self.dropout(f) for f in feat_maps]
+        # feat_maps_pooled = [torch.mean(f, dim=2) for f in feat_maps]
         feat_maps_pooled = [torch.max(f, dim=2)[0] for f in feat_maps]
+        feat_maps_pooled = [self.dropout(f) for f in feat_maps_pooled]
         pred_mask = self.decoder(feat_maps_pooled)
         return pred_mask
-    # BACKBONE FORWARD
+    # # BACKBONE FORWARD
     # def forward(self, x):
     #     if x.ndim==4:
     #         x=x[:,None]
@@ -611,11 +581,7 @@ class RegressionPLModel(pl.LightningModule):
     #     feat_maps = self.backbone(x)        
     #     feat_maps_pooled = [torch.max(f, dim=2)[0] for f in feat_maps]
     #     pred_mask = self.decoder(feat_maps_pooled)
-    #     # x = self.resnet_to_rgb(pred_mask)
     #     x = self.encoder_2d(pred_mask)
-
-    #     # pred_mask = self.decoder(feat_maps_pooled)
-        
     #     return x.logits
     
     def training_step(self, batch, batch_idx):
@@ -628,15 +594,12 @@ class RegressionPLModel(pl.LightningModule):
         # Log the loss
         self.log("train/total_loss", loss1.item(), on_step=True, on_epoch=True, prog_bar=True)
         
-        # Log the learning rate (from optimizer)
-        opt = self.optimizers()  # returns a list if multiple optimizers, or a single one
-        if isinstance(opt, list):
-            lr = opt[0].param_groups[0]['lr']
-        else:
-            lr = opt.param_groups[0]['lr']
-        
-        self.log("train/lr", lr, on_step=True, on_epoch=False, prog_bar=False)
+        # Log both learning rates
+        opt = self.optimizers()
+        lrs = [group['lr'] for group in opt.param_groups]
 
+        self.log("train/lr_backbone", lrs[0], on_step=True, on_epoch=False, prog_bar=False)
+        self.log("train/lr_decoder", lrs[1], on_step=True, on_epoch=False, prog_bar=False)
         return {"loss": loss1}
 
     def validation_step(self, batch, batch_idx):
@@ -648,7 +611,7 @@ class RegressionPLModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            pred_patch = F.interpolate(y_preds[i].unsqueeze(0).float(),size=(self.hparams.size, self.hparams.size),mode='bilinear',align_corners=False).squeeze(0).squeeze(0).numpy()
+            pred_patch = F.interpolate(y_preds[i].unsqueeze(0).float(),size=(self.hparams.size, self.hparams.size),mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_pred[y1:y2, x1:x2] += pred_patch
             # self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=4,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
@@ -666,12 +629,44 @@ class RegressionPLModel(pl.LightningModule):
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
     
-    def configure_optimizers(self):
+    # def configure_optimizers(self):
 
-        optimizer = AdamW(self.parameters(), lr=CFG.lr)
-        # scheduler =torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-4,pct_start=0.15, steps_per_epoch=self.hparams.total_steps, epochs=50,final_div_factor=1e2)
-        scheduler = get_scheduler(CFG, optimizer)
-        return [optimizer],[scheduler]
+    #     optimizer = AdamW(self.parameters(), lr=CFG.lr)
+    #     scheduler =torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-3,pct_start=0.15, steps_per_epoch=self.hparams.total_steps, epochs=50,final_div_factor=1e2)
+    #     # scheduler = get_scheduler(CFG, optimizer)
+    #     return [optimizer],[scheduler]
+    from torch.optim import AdamW
+    
+
+    def configure_optimizers(self):
+        base_lr = CFG.lr
+        # base_lr = 2e-5
+        # # Split parameters
+        decoder_params = list(self.decoder.parameters())  # or self.classifier
+        base_params = [p for n, p in self.named_parameters() if "decoder" not in n]
+
+        # Define param groups with different learning rates
+        param_groups = [
+            {'params': base_params, 'lr': base_lr},
+            {'params': decoder_params, 'lr': base_lr},
+        ]
+
+        optimizer = AdamW(param_groups)
+        # optimizer = AdamW(self.parameters(), lr=CFG.lr)
+        scheduler =torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-4,pct_start=0.15, steps_per_epoch=self.hparams.total_steps, epochs=50,final_div_factor=1e2)
+        # # Scheduler using OneCycleLR with per-param max_lr
+        # scheduler = OneCycleLR(
+        #     optimizer,
+        #     max_lr=[3e-4, 3e-4],  # match param group order
+        #     pct_start=0.1,
+        #     steps_per_epoch=self.hparams.total_steps,
+        #     epochs=50,
+        #     final_div_factor=1e2,
+        #     # cycle_momentum=False,
+        # )
+
+        return [optimizer], [{'scheduler': scheduler, 'interval': 'step'}]
+
 
 
 class GradualWarmupSchedulerV2(GradualWarmupScheduler):
@@ -769,10 +764,10 @@ for lr in [1e-4,2e-6,1e-4]:
 
             wandb_logger = WandbLogger(project="vesivus",name=run_slug+f'{enc}')
             norm=fold==1
-            model=RegressionPLModel(enc='resnet101',pred_shape=pred_shape,size=CFG.size,total_steps=len(train_loader))
+            model=RegressionPLModel(enc='resnet101',pred_shape=pred_shape,size=CFG.size,total_steps=len(train_loader)*2,with_norm=False)
             
             # # # DION
-            # checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/f15_div2_l15-35_20231210132040_0_fr_i3depoch=15.ckpt", map_location="cpu", weights_only=False)
+            # checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/f15_div2_l15-35_20231210132040_0_fr_i3depoch=7-v2.ckpt", map_location="cpu", weights_only=False)
             # model.load_state_dict(checkpoint["state_dict"], strict=True)
 
             print('FOLD : ',fold)

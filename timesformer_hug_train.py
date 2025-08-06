@@ -63,18 +63,17 @@ class CFG:
     train_batch_size =  15 # 32
     valid_batch_size = 15
     check_val = 4
-    lr = 1e-4
+    lr = 2e-5
     
-    # Size of fragments
-    frags_ratio1 = ['frag','s4','re','202']
-    frags_ratio2 = ['nothing']
+    # Change the size of fragments
+    frags_ratio1 = ['frag','re']
+    frags_ratio2 = ['202','s4','left']
     ratio1 = 2
     ratio2 = 1
     
     # ============== fold =============
-    segments = ['frag5','20231210132040'] 
-    valid_id = '20231210132040'
-    
+    segments = ['frag1','20231215151901'] 
+    valid_id = '20231215151901'#20231215151901'
     
     num_workers = 8
     # ============== model cfg =============
@@ -114,7 +113,6 @@ class CFG:
         ),
         ToTensorV2(transpose_mask=True),
     ]
-
 
     valid_aug_list = [
         A.Normalize(
