@@ -61,22 +61,22 @@ class CFG:
     
     train_batch_size =  20 # 32
     valid_batch_size = 20
-    lr = 2e-5
+    lr = 8e-5
     num_workers = 8
     # ============== model cfg =============
     scheduler = 'onecycle'#'cosine', 'linear'
-    epochs = 16
+    epochs = 50
     warmup_factor = 10
     
     # Change the size of fragments
     frags_ratio1 = ['frag','re']
-    frags_ratio2 = ['202','s4','left']
+    frags_ratio2 = ['s4','20231210132040']
     ratio1 = 2
     ratio2 = 1
     
     # ============== fold =============
-    segments = ['frag5','20231215151901'] 
-    valid_id = '20231215151901'#20231215151901'
+    segments = ['frag5','frag1','20231210132040'] 
+    valid_id = '20231210132040'#20231215151901'
     # ============== fixed =============
     min_lr = 1e-7
     weight_decay = 1e-6
@@ -137,22 +137,22 @@ if wandb.run is not None:
 utils.cfg_init(CFG)
 torch.set_float32_matmul_precision('medium')
 for inchans in [16]:
-    for lr in [1e-4]:
+    for lr in [2e-5]:
         for freeze in [False]:
-            for frags in [['frag5','20231215151901'] ,['frag5','20231215151901'],['frag5','20231215151901'],['Frag1','20231215151901']]:
+            for frags in [['s4','Frag5','20231210132040'],['s4','20231210132040'],['Frag5','20231215151901'],['Frag1','20231215151901']]:
                 CFG.segments = frags
-                # CFG.lr = lr
+                CFG.lr = lr
                 CFG.in_chans = inchans
                 if inchans ==20:
                     CFG.train_batch_size=7
                     CFG.valid_batch_size=7
                     CFG.start_idx=20
                 elif inchans==16:
-                    CFG.train_batch_size=10
-                    CFG.valid_batch_size=10
+                    CFG.train_batch_size=12
+                    CFG.valid_batch_size=12
                     CFG.start_idx=23
                
-# 
+
                 fragment_id = CFG.valid_id
                 run_slug=f'SWIN_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}'
                 
@@ -200,11 +200,11 @@ for inchans in [16]:
                 model = swin.SwinModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger,freeze=False)
                 wandb_logger.watch(model, log="all", log_freq=50)
 
-                # model = swin.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/SWIN_['frag5', 's4', '20231210132040']_valid=20231210132040_size=224_lr=2e-05_in_chans=16_epoch=7.ckpt")
+                # model = swin.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/SWIN_['frag5', '20231210132040']_valid=20231210132040_size=224_lr=2e-05_in_chans=16_epoch=5.ckpt")
                 trainer = pl.Trainer(
                     max_epochs=CFG.epochs,
                     accelerator="gpu",
-                    check_val_every_n_epoch=2,
+                    check_val_every_n_epoch=4,
                     devices=-1,
                     logger=wandb_logger,
                     default_root_dir="./modelss",

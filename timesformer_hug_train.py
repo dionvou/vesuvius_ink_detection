@@ -61,8 +61,8 @@ class CFG:
     stride = tile_size // 8
     
     train_batch_size =  15 # 32
-    valid_batch_size = 15
-    check_val = 4
+    valid_batch_size = 20
+    check_val = 2
     lr = 2e-5
     
     # Change the size of fragments
@@ -72,7 +72,7 @@ class CFG:
     ratio2 = 1
     
     # ============== fold =============
-    segments = ['frag1','20231215151901'] 
+    segments = ['Frag5','20231215151901'] 
     valid_id = '20231215151901'#20231215151901'
     
     num_workers = 8
@@ -175,7 +175,7 @@ wandb_logger = WandbLogger(project="vesivus",name=run_slug)
 model = timesformer_hug.TimesfomerModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger)
 wandb_logger.watch(model, log="all", log_freq=100)
 
-# model = timesformer_hug.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['frag5', '20231210132040']_valid=20231210132040_size=224_lr=0.0001_in_chans=16_epoch=27.ckpt")
+# model = timesformer_hug.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['Frag5', '20231210132040']_valid=20231210132040_size=224_lr=2e-05_in_chans=16_epoch=13.ckpt")
 trainer = pl.Trainer(
     max_epochs=CFG.epochs,
     accelerator="gpu",

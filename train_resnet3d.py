@@ -71,7 +71,7 @@ class CFG:
     exp_name = 'pretraining_all'
     
     # ============== model cfg =============
-    frags = ['frag1','20231215151901']
+    frags = ['frag5','frag1','20231215151901']
     valid_id = '20231215151901'#'20240304141530'#'20231210132040'
     backbone='resnet3d'
     # ============== training cfg =============
@@ -79,8 +79,8 @@ class CFG:
     tile_size = 256
     stride = tile_size // 8
 
-    train_batch_size =  25
-    valid_batch_size = 25
+    train_batch_size =  12
+    valid_batch_size = 12
 
     scheduler = 'GradualWarmupSchedulerV2'
     
@@ -215,10 +215,10 @@ def read_image_mask(fragment_id, start_idx, in_chans):
         # else:
         #     image = cv2.resize(image, (image.shape[1]//1,image.shape[0]//1), interpolation = cv2.INTER_AREA)
             # Resize safely if required
-        if any(sub in fragment_id for sub in ["Frag"]):
-            new_h, new_w = image.shape[0]//1, image.shape[1]//1  #5 height, width order corrected
+        if any(sub in fragment_id for sub in ["frag"]):
+            new_h, new_w = image.shape[0]//2, image.shape[1]//2  #5 height, width order corrected
         else:
-            new_h, new_w = image.shape[0]//2, image.shape[1]//2
+            new_h, new_w = image.shape[0]//1, image.shape[1]//1
         # # HERE RESIZE
         # new_h, new_w = image.shape[0] //2, image.shape[1] //2  # height, width order corrected
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
@@ -713,7 +713,7 @@ print(CFG.valid_id)
 fragment_id = CFG.valid_id
 
 valid_mask_gt = cv2.imread(CFG.comp_dataset_path + f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
-valid_mask_gt = cv2.resize(valid_mask_gt, (valid_mask_gt.shape[1]//2, valid_mask_gt.shape[0]//2), interpolation=cv2.INTER_AREA)
+valid_mask_gt = cv2.resize(valid_mask_gt, (valid_mask_gt.shape[1]//1, valid_mask_gt.shape[0]//1), interpolation=cv2.INTER_AREA)
 # pad0 = (CFG.size - valid_mask_gt.shape[0] % CFG.size)
 # pad1 = (CFG.size - valid_mask_gt.shape[1] % CFG.size)
 # valid_mask_gt = np.pad(valid_mask_gt, [(0, pad0), (0, pad1)], constant_values=0)
@@ -778,7 +778,7 @@ for lr in [1e-4,2e-6,1e-4]:
                 max_epochs=21,
                 accelerator="gpu",
                 devices=-1,
-                check_val_every_n_epoch=4,
+                check_val_every_n_epoch=2,
                 logger=wandb_logger,
                 default_root_dir="./models",
                 accumulate_grad_batches=1,

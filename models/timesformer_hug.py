@@ -182,6 +182,7 @@ class TimesfomerModel(pl.LightningModule):
         self.classifier = nn.Sequential(
             nn.Linear(768, (self.hparams.size//16)**2),  
         )
+        self.dropout = nn.Dropout(p=0.2)
                 
 
         # self.classifier = nn.Sequential(
@@ -233,6 +234,7 @@ class TimesfomerModel(pl.LightningModule):
         outputs = self.backbone(x, output_hidden_states=True)
         last_hidden_state = outputs.last_hidden_state  # tuple of all hidden layers
         cls = last_hidden_state[:,0,:]
+        cls = self.dropout(cls)
         # feat_2d = cls.max(dim=1)[0]  # average temporal patches: (B, C, H_patch, W_patch)
         # seg_logits = self.classifier(feat_2d)  # (B, num_classes, 14, 14)
         preds = self.classifier(cls)

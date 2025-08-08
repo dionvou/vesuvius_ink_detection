@@ -73,7 +73,7 @@ class TimesformerDataset(Dataset):
     
     def fourth_augment(self,image, in_chans=16):
         image_tmp = np.zeros_like(image)
-        cropping_num = random.randint(in_chans-5, in_chans)
+        cropping_num = random.randint(in_chans-3, in_chans)
 
         start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
         crop_indices = np.arange(start_idx, start_idx + cropping_num)
@@ -154,7 +154,6 @@ class TimesformerDataset(Dataset):
                 return_tensors='pt'
                 )
             pixel_values = encoding["pixel_values"].squeeze(0)
-            
             return pixel_values, label
             # print(image.shape)
             # image = image.permute(1,0,2,3)
@@ -177,9 +176,9 @@ class SwinModel(pl.LightningModule):
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
 
         self.backbone = swin_transformer.swin3d_b(weights="KINETICS400_IMAGENET22K_V1") #KINETICS400_IMAGENET22K_V1
-        # if freeze:
-        #     for param in self.backbone.parameters():
-        #         param.requires_grad = False
+        if freeze:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
 
         embed_dim = self.backbone.head.in_features  # works before replacing with Identity()
         self.backbone.head = nn.Identity()
