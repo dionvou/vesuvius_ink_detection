@@ -76,6 +76,49 @@ class TimesformerDataset(Dataset):
         # Reorder along D axis
         image_shuffled = image[:, :, shuffled_indices]
         return image_shuffled
+    
+    def z_circular_shift_np(self, volume, max_shift=5, prob=0.5, cutout_size=4, cutout_prob=0.5):
+        """
+        Circularly shift slices along Z-axis (last dim) by a random integer in [-max_shift, max_shift].
+        Then randomly cut out (zero out) a contiguous block of slices along Z-axis.
+        
+        Args:
+            volume: np.ndarray shape (H, W, D) or (C, H, W, D)
+            max_shift: max absolute shift (int). shift=0 means no-op.
+            prob: probability to apply shift
+            cutout_size: number of consecutive slices to cut out
+            cutout_prob: probability to apply cutout
+        
+        Returns:
+            volume after augmentation
+        """
+
+        if (random.random() > prob) or (max_shift == 0):
+            shifted_volume = volume
+        else:
+            D = volume.shape[-1]
+            shift = random.randint(-max_shift, max_shift)
+            if shift == 0:
+                shifted_volume = volume
+            else:
+                shifted_volume = np.roll(volume, shift=shift, axis=-1)
+                        # Apply cutout with given probability
+        if (random.random() < cutout_prob) and (cutout_size > 0):
+            D = shifted_volume.shape[-1]
+            # Ensure cutout size is not larger than volume depth
+            cutout_size_clamped = min(cutout_size, D)
+            start_idx = random.randint(0, D - cutout_size_clamped)
+            # Zero out the block along the last axis
+            if shifted_volume.ndim == 3:
+                # shape: (H, W, D)
+                shifted_volume[:, :, start_idx:start_idx + cutout_size_clamped] = 0
+            elif shifted_volume.ndim == 4:
+                # shape: (C, H, W, D)
+                shifted_volume[:, :, :, start_idx:start_idx + cutout_size_clamped] = 0
+            else:
+                raise ValueError("Unsupported volume shape for cutout")
+
+        return shifted_volume
 
     def __getitem__(self, idx):
         if self.xyxys is not None: #VALID
@@ -103,8 +146,9 @@ class TimesformerDataset(Dataset):
             image = self.images[idx]
             label = self.labels[idx]
 
-            image=self.fourth_augment(image, self.cfg.in_chans)
+            # image=self.fourth_augment(image, self.cfg.in_chans)
             # image = self.shuffle_d_axis(image)
+            image = self.z_circular_shift_np(image)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)

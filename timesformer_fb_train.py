@@ -58,18 +58,18 @@ class CFG:
     tile_size = 224
     stride = tile_size // 8 
     
-    train_batch_size =  8 # 32
-    valid_batch_size = 8
+    train_batch_size =  5 # 32
+    valid_batch_size = 5
     
     # Size of fragments
-    frags_ratio1 = ['frag','202','left','s4']
+    frags_ratio1 = ['frag','left']
     frags_ratio2 = ['nothing']
     ratio1 = 2
     ratio2 = 1
     
     # ============== fold =============
-    segments = ['frag1','20231210132040'] 
-    valid_id = '20231210132040'
+    segments = ['frag5','20231215151901'] 
+    valid_id = '20231215151901'#20231215151901'
     
     # ============== model cfg =============
 
@@ -197,8 +197,8 @@ trainer = pl.Trainer(
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
     strategy='ddp',
-    callbacks=[ModelCheckpoint(filename=f'{run_slug}_'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
-    ]
+    # callbacks=[ModelCheckpoint(filename=f'{run_slug}_'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
+    # ]
 
 )
 # trainer.validate(model=model, dataloaders=valid_loader, verbose=True)

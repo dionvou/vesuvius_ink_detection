@@ -20,6 +20,8 @@ from warmup_scheduler import GradualWarmupScheduler
 import albumentations as A
 
 import utils
+import torch
+import torch.nn.functional as F
 
 
 # Convert to PIL and then to 3 channels
@@ -38,9 +40,17 @@ class TimesformerDataset(Dataset):
         self.transform = transform
         self.xyxys=xyxys
         
-        self.processor = AutoImageProcessor.from_pretrained("facebook/timesformer-base-finetuned-k600", use_fast=True)
+        self.video_transform = T.Compose([
+            T.ConvertImageDtype(torch.float32), 
+            T.Normalize(mean=[0.45, 0.45, 0.45], std=[0.225, 0.225, 0.225])
+            ])
+        
+        self.processor = AutoImageProcessor.from_pretrained("facebook/timesformer-hr-finetuned-ssv2", use_fast=True)
+        
+        # # self.processor.do_normalize = False
+        # self.processor.do_resize = False
+        # self.processor.do_center_crop = False
         print("Using Timesformer processor with image size:", self.processor)
-        self.processor.do_normalize = False
         self.pil_transform  = pil_transform
         
     def __len__(self):
@@ -67,6 +77,49 @@ class TimesformerDataset(Dataset):
             image_tmp[..., temporal_random_cutout_idx] = 0
         image = image_tmp
         return image
+    def z_circular_shift_np(self, volume, max_shift=3, prob=0.5, cutout_size=2, cutout_prob=0.):
+        """
+        Circularly shift slices along Z-axis (last dim) by a random integer in [-max_shift, max_shift].
+        Then randomly cut out (zero out) a contiguous block of slices along Z-axis.
+        
+        Args:
+            volume: np.ndarray shape (H, W, D) or (C, H, W, D)
+            max_shift: max absolute shift (int). shift=0 means no-op.
+            prob: probability to apply shift
+            cutout_size: number of consecutive slices to cut out
+            cutout_prob: probability to apply cutout
+        
+        Returns:
+            volume after augmentation
+        """
+
+        if (random.random() > prob) or (max_shift == 0):
+            shifted_volume = volume
+        else:
+            D = volume.shape[-1]
+            shift = random.randint(-max_shift, max_shift)
+            if shift == 0:
+                shifted_volume = volume
+            else:
+                shifted_volume = np.roll(volume, shift=shift, axis=-1)
+
+        # Apply cutout with given probability
+        if (random.random() < cutout_prob) and (cutout_size > 0):
+            D = shifted_volume.shape[-1]
+            # Ensure cutout size is not larger than volume depth
+            cutout_size_clamped = min(cutout_size, D)
+            start_idx = random.randint(0, D - cutout_size_clamped)
+            # Zero out the block along the last axis
+            if shifted_volume.ndim == 3:
+                # shape: (H, W, D)
+                shifted_volume[:, :, start_idx:start_idx + cutout_size_clamped] = 0
+            elif shifted_volume.ndim == 4:
+                # shape: (C, H, W, D)
+                shifted_volume[:, :, :, start_idx:start_idx + cutout_size_clamped] = 0
+            else:
+                raise ValueError("Unsupported volume shape for cutout")
+
+        return shifted_volume
     def shuffle_d_axis(self,image):
         # image shape: (H, W, D)
         d = image.shape[2]
@@ -88,17 +141,22 @@ class TimesformerDataset(Dataset):
                 label = data['mask']
                 label=F.interpolate(label.unsqueeze(0),(self.cfg.size//16,self.cfg.size//16)).squeeze(0)
             
-            image = image.permute(1,0,2,3)
-            frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
+            # image = image.permute(1,0,2,3)
+            # frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
 
-            # now run the Timesformer processor ONCE:
-            encoding = self.processor(
-                [frame for frame in frames],   # list of PIL
-                return_tensors='pt'
-                )
-            # encoding["pixel_values"] is (1, T, C, H, W)
-            pixel_values = encoding["pixel_values"].squeeze(0)
-            return pixel_values, label,xy
+            # # now run the Timesformer processor ONCE:
+            # encoding = self.processor(
+            #     frames,
+            #     # [frame for frame in frames],   # list of PIL
+            #     return_tensors='pt'
+            #     )
+            # # encoding["pixel_values"] is (1, T, C, H, W)
+            # pixel_values = encoding["pixel_values"].squeeze(0)
+            # return pixel_values, label,xy
+            image = image.permute(1,0,2,3)
+            image = image.repeat(1, 3, 1, 1)
+            image = torch.stack([self.video_transform(f) for f in image])
+            return image, label,xy
         else:
             image = self.images[idx]
             label = self.labels[idx]
@@ -110,8 +168,9 @@ class TimesformerDataset(Dataset):
             # image=image.transpose(0,2,1)#(c,w,h)
             # image=image.transpose(2,1,0)#(h,w,c)
 
-            image=self.fourth_augment(image, self.cfg.in_chans)
+            # image=self.fourth_augment(image, self.cfg.in_chans)
             # image = self.shuffle_d_axis(image)
+            # image = self.z_circular_shift_np(image)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)
@@ -120,49 +179,22 @@ class TimesformerDataset(Dataset):
                 label=F.interpolate(label.unsqueeze(0),(self.cfg.size//16,self.cfg.size//16)).squeeze(0)
                 
             image = image.permute(1,0,2,3)
-            frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
+            image = image.repeat(1, 3, 1, 1)
+            image = torch.stack([self.video_transform(f) for f in image]) # list of frames
+            return image, label
+                
+            # image = image.permute(1,0,2,3)
+            # frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
 
-            encoding = self.processor(
-                [frame for frame in frames],   # list of PIL
-                return_tensors='pt'
-                )
-            pixel_values = encoding["pixel_values"].squeeze(0)
+            # encoding = self.processor(
+            #     frames,
+            #     # [frame for frame in frames],   # list of PIL
+            #     return_tensors='pt'
+            #     )
+            # pixel_values = encoding["pixel_values"].squeeze(0)
+            # # print(pixel_values.shape)
+            # return pixel_values, label
             
-            return pixel_values, label
-        
-class TransformerDecoder(nn.Module):
-    def __init__(self, embed_dim=768, num_layers=1, num_heads=8, ff_dim=2048):
-        super().__init__()
-        decoder_layer = nn.TransformerEncoderLayer(
-            d_model=embed_dim,
-            nhead=num_heads,
-            dim_feedforward=ff_dim,
-            batch_first=True
-        )
-        self.decoder = nn.TransformerEncoder(decoder_layer, num_layers=num_layers)
-
-    def forward(self, x):
-        return self.decoder(x)
-    
-from transformers import SegformerForSemanticSegmentation
-from torchvision.models.video import swin_transformer
-
-
-class Decoder2D(nn.Module):
-    def __init__(self, in_channels, num_classes):
-        super().__init__()
-        self.up1 = nn.ConvTranspose2d(in_channels, 256, kernel_size=4, stride=4)
-        self.bn1 = nn.BatchNorm2d(256)
-        self.up2 = nn.ConvTranspose2d(256, 64, kernel_size=4, stride=4)
-        self.bn2 = nn.BatchNorm2d(64)
-        self.conv_out = nn.Conv2d(64, num_classes, kernel_size=1)
-
-    def forward(self, x):
-        x = F.relu(self.bn1(self.up1(x)))  # upsample 7 -> 28
-        x = F.relu(self.bn2(self.up2(x)))  # upsample 28 -> 112
-        # x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)  # 112 -> 224
-        x = self.conv_out(x)
-        return x
     
 class TimesfomerModel(pl.LightningModule):
     def __init__(self, pred_shape, size, lr, scheduler=None,wandb_logger=None, with_norm=False):
@@ -175,9 +207,9 @@ class TimesfomerModel(pl.LightningModule):
 
         self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
-        self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
+        self.loss_func= lambda x,y: 0. * self.loss_func1(x,y)+1*self.loss_func2(x,y)
         
-        self.backbone = TimesformerModel.from_pretrained("facebook/timesformer-hr-finetuned-k600")
+        self.backbone = TimesformerModel.from_pretrained("facebook/timesformer-hr-finetuned-ssv2")
 
         self.classifier = nn.Sequential(
             nn.Linear(768, (self.hparams.size//16)**2),  
@@ -233,55 +265,14 @@ class TimesfomerModel(pl.LightningModule):
             x=self.normalization(x)
         outputs = self.backbone(x, output_hidden_states=True)
         last_hidden_state = outputs.last_hidden_state  # tuple of all hidden layers
+        # print(last_hidden_state.shape)
         cls = last_hidden_state[:,0,:]
-        cls = self.dropout(cls)
+        # cls = self.dropout(cls)
         # feat_2d = cls.max(dim=1)[0]  # average temporal patches: (B, C, H_patch, W_patch)
         # seg_logits = self.classifier(feat_2d)  # (B, num_classes, 14, 14)
         preds = self.classifier(cls)
         preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
         return preds
-    # def forward(self, x):
-
-    #     outputs = self.backbone(x, output_hidden_states=True)
-    #     last_hidden_state = outputs.last_hidden_state  # tuple of all hidden layers
-    #     cls = last_hidden_state[:,0,:]
-    #     preds = self.classifier(cls)
-    #     preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
-    #     return preds
-    
-    # def masked_loss(self, y_pred, y_true):
-    #     mask = (y_true != self.IGNORE_INDEX).float()
-    #     # y_true_clamped = torch.clamp(y_true, 0, 1).float()
-
-    #     y_pred_masked = y_pred * mask
-    #     y_true_masked = y_true * mask
-
-    #     loss1 = self.loss_func1(y_pred_masked, y_true_masked)
-    #     loss2 = self.loss_func2(y_pred_masked, y_true_masked)
-    #     return 0.5*loss1 + 0.5 * loss2
-    # def masked_loss(self, y_pred, y_true):
-    #     # Create mask: 1 where valid, 0 where ignore
-    #     mask = (y_true != self.IGNORE_INDEX).float()
-
-    #     # Compute per-pixel loss (reduction='none' required)
-    #     loss1 = self.loss_func1(y_pred, y_true)  # e.g., nn.BCEWithLogitsLoss(reduction='none')
-    #     loss2 = self.loss_func2(y_pred, y_true)
-
-    #     # Apply mask
-    #     loss1 = (loss1 * mask).sum() / (mask.sum() + 1e-8)
-    #     loss2 = (loss2 * mask).sum() / (mask.sum() + 1e-8)
-
-    #     return 0.5 * loss1 + 0.5 * loss2
-    # def masked_loss(self, y_pred, y_true):
-    #     # Create mask where labels are valid (not equal to ignore index)
-    #     mask = (y_true != self.IGNORE_INDEX).float()
-
-    #     # Compute losses with masking
-    #     loss1 = self.loss_func1(y_pred, y_true, mask=mask)
-    #     loss2 = self.loss_func2(y_pred, y_true, mask=mask)
-
-    #     return 0.5 * loss1 + 0.5 * loss2
-
    
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -316,7 +307,7 @@ class TimesfomerModel(pl.LightningModule):
 
         param_groups = [
             {'params': other_params, 'lr': self.hparams.lr},
-            {'params': head_params, 'lr': self.hparams.lr*10 },  # 10x LR for the head
+            {'params': head_params, 'lr': self.hparams.lr},  # 10x LR for the head
         ]
 
         optimizer = AdamW(param_groups)

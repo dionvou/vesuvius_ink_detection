@@ -58,11 +58,11 @@ class CFG:
     
     size = 224
     tile_size = 224
-    stride = tile_size // 8
+    stride = tile_size // 16
     
-    train_batch_size =  15 # 32
-    valid_batch_size = 20
-    check_val = 2
+    train_batch_size =  15# 32
+    valid_batch_size = 70
+    check_val = 4
     lr = 2e-5
     
     # Change the size of fragments
@@ -73,17 +73,17 @@ class CFG:
     
     # ============== fold =============
     segments = ['Frag5','20231215151901'] 
-    valid_id = '20231215151901'#20231215151901'
+    valid_id = '20231215151901'
     
     num_workers = 8
     # ============== model cfg =============
-    scheduler = 'linear' # 'cosine', 'linear'
+    scheduler = 'cosine' # 'cosine', 'linear'
     epochs = 30
     warmup_factor = 10
     min_lr = 1e-7
     weight_decay = 1e-6
     max_grad_norm = 100
-    num_workers = 8
+    num_workers = 16
     seed = 0
     
     # ============== comp exp name =============
@@ -107,18 +107,11 @@ class CFG:
                 ], p=0.4),
         A.CoarseDropout(max_holes=2, max_width=int(size * 0.2), max_height=int(size * 0.2), 
                         mask_fill_value=0, p=0.5),
-        A.Normalize(
-            mean= [0] * in_chans,
-            std= [1] * in_chans
-        ),
         ToTensorV2(transpose_mask=True),
     ]
 
     valid_aug_list = [
-        A.Normalize(
-            mean= [0] * in_chans,
-            std= [1] * in_chans
-        ),
+
         ToTensorV2(transpose_mask=True),  
     ]
     
@@ -160,12 +153,12 @@ valid_dataset = timesformer_hug.TimesformerDataset(
 train_loader = DataLoader(train_dataset,
                             batch_size=CFG.train_batch_size,
                             shuffle=True,
-                            num_workers=CFG.num_workers, pin_memory=True, drop_last=True,
+                            num_workers=CFG.num_workers, pin_memory=True, drop_last=True,persistent_workers=True,prefetch_factor=2
                             )
 valid_loader = DataLoader(valid_dataset,
                             batch_size=CFG.valid_batch_size,
                             shuffle=False,
-                            num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
+                            num_workers=CFG.num_workers, pin_memory=True, drop_last=True,persistent_workers=True,prefetch_factor=2)
 
 print(f"Train loader length: {len(train_loader)}")
 print(f"Valid loader length: {len(valid_loader)}")
@@ -175,7 +168,7 @@ wandb_logger = WandbLogger(project="vesivus",name=run_slug)
 model = timesformer_hug.TimesfomerModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger)
 wandb_logger.watch(model, log="all", log_freq=100)
 
-# model = timesformer_hug.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['Frag5', '20231210132040']_valid=20231210132040_size=224_lr=2e-05_in_chans=16_epoch=13.ckpt")
+# model = timesformer_hug.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['frag5', '20231215151901']_valid=20231215151901_size=224_lr=2e-05_in_chans=16_epoch=3.ckpt")
 trainer = pl.Trainer(
     max_epochs=CFG.epochs,
     accelerator="gpu",

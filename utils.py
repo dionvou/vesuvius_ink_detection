@@ -26,7 +26,12 @@ def read_image_mask(fragment_id, CFG=None):
     end_idx = start_idx + CFG.in_chans
     
     idxs = range(start_idx, end_idx)
-    image_shape =0
+    image_shape = 0
+    
+    if fragment_id.startswith("Frag"):
+        print("Fraggggggggggggggggggggggggggggggggggggggggggggggggggggggggg")
+        idxs = range(19, 19 + CFG.in_chans)
+
 
     for i in tqdm(idxs):
         tif_path = os.path.join(CFG.segment_path, fragment_id, "layers", f"{i:02}.tif")
@@ -40,9 +45,9 @@ def read_image_mask(fragment_id, CFG=None):
         else:
             image = cv2.imread(png_path, 0)
         image_shape = image.shape
-        # print(image.shape)
-        pad0 = (CFG.tile_size - image.shape[0] % CFG.tile_size)
-        pad1 = (CFG.tile_size - image.shape[1] % CFG.tile_size)
+
+        pad0 = (CFG.tile_size - image.shape[0] % CFG.tile_size) % CFG.tile_size
+        pad1 = (CFG.tile_size - image.shape[1] % CFG.tile_size) % CFG.tile_size
         image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0) 
         
         # Resize the image to match the expected size
@@ -56,28 +61,13 @@ def read_image_mask(fragment_id, CFG=None):
             new_w = int(image.shape[1] * scale)
             new_h = int(image.shape[0] * scale)
             image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        else:
-            pass
-       
-        image=np.clip(image,0,200)
+
+        image=np.clip(image,30,200)
         images.append(image)
         
     images = np.stack(images, axis=2)
     print(f" Shape of {fragment_id} segment: {images.shape}")
-    # if (any(sub in fragment_id for sub in CFG.frags_ratio1)):
-    #     scale_factor = 1 / CFG.ratio1
-    #     if isinstance(images, np.ndarray):
-    #         images = torch.from_numpy(images).float()  # Ensure float32 type
-
-    #     # Add batch & channel dimension: (1, 1, D, H, W)
-    #     images = images.unsqueeze(0).unsqueeze(0)
-
-    #     # Resize with trilinear interpolation
-    #     resized = F.interpolate(images, scale_factor=scale_factor, mode='trilinear', align_corners=False)
-
-    #     # Remove extra dimensions: (D/2, H/2, W/2)
-    #     images = resized.squeeze().numpy()
-       
+   
     # # READ INK LABELS
     inklabel_files = glob.glob(f"{CFG.segment_path}/{fragment_id}/*inklabels.*")
     if len(inklabel_files) > 0:
@@ -85,7 +75,6 @@ def read_image_mask(fragment_id, CFG=None):
     else:
         print(f"Creating empty mask for {fragment_id}")
         mask = np.zeros(images[0].shape)
-    # mask is //16 in pseudo    
     # print(mask.shape)
     if image_shape!=mask.shape[0]:
         mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
@@ -103,26 +92,6 @@ def read_image_mask(fragment_id, CFG=None):
     mask = cv2.resize(mask, (images.shape[1], images.shape[0]), interpolation=cv2.INTER_AREA)
     fragment_mask = cv2.resize(fragment_mask, (images.shape[1], images.shape[0]), interpolation=cv2.INTER_AREA)
 
-    # # RESIZE MASKS
-    # if (any(sub in fragment_id for sub in CFG.frags_ratio1)) and mask.shape[0]!=images.shape[0]:
-    #     # print("Rescaled by factor of ",CFG.ratio1)
-    #     # scale = 1 / CFG.ratio1
-    #     # new_w = int(mask.shape[1] * scale)
-    #     # new_h = int(mask.shape[0] * scale)
-    #     # fragment_mask = cv2.resize(fragment_mask, (new_w, new_h), interpolation = cv2.INTER_AREA)
-    #     # mask = cv2.resize(mask , (new_w, new_h), interpolation = cv2.INTER_AREA)
-    # elif (any(sub in fragment_id for sub in CFG.frags_ratio2)) and mask.shape[0]!=images.shape[0]:
-    #     fragment_mask = cv2.resize(fragment_mask, (images.shape[1], images.shape[0]), interpolation=cv2.INTER_NEAREST)
-        # print("Rescaled by factor of ",CFG.ratio2)
-        # scale = 1 / CFG.ratio2
-        # new_w = int(mask.shape[1] * scale)
-        # new_h = int(mask.shape[0] * scale)
-        # fragment_mask = cv2.resize(fragment_mask, (new_w, new_h), interpolation = cv2.INTER_AREA)
-        # mask = cv2.resize(mask , (new_w, new_h), interpolation = cv2.INTER_AREA)
-    # else:
-    #     print("No rescaled")
-    
-    # print(mask.shape)
     return images, mask, fragment_mask
 
 def get_train_valid_dataset(CFG=None):
@@ -140,7 +109,7 @@ def get_train_valid_dataset(CFG=None):
         fragment_path = os.path.join(path, fragment_id)
 
         if not os.path.isdir(fragment_path):
-            continue  # Skip files, process directories only if that's how your fragments are stored
+            continue  # Skip
 
         print('reading', fragment_id)
 

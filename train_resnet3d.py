@@ -71,16 +71,16 @@ class CFG:
     exp_name = 'pretraining_all'
     
     # ============== model cfg =============
-    frags = ['frag5','frag1','20231215151901']
-    valid_id = '20231215151901'#'20240304141530'#'20231210132040'
+    frags = ['frag5','frag1','20231210132040']
+    valid_id = '20231210132040'#'20240304141530'#'20231210132040'
     backbone='resnet3d'
     # ============== training cfg =============
     size = 256
     tile_size = 256
     stride = tile_size // 8
 
-    train_batch_size =  12
-    valid_batch_size = 12
+    train_batch_size =  15
+    valid_batch_size = 50
 
     scheduler = 'GradualWarmupSchedulerV2'
     
@@ -88,7 +88,7 @@ class CFG:
     in_chans = 30
     
     epochs = 30 # 30
-    lr = 2e-6
+    lr = 2e-5
     # ============== fold =============
     
 
@@ -121,7 +121,7 @@ class CFG:
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
         A.RandomBrightnessContrast(p=0.75),
-        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.15,p=0.75),
+        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.05,p=0.75),
         A.OneOf([
                 A.GaussNoise(var_limit=[10, 50]),
                 A.GaussianBlur(),
@@ -132,20 +132,27 @@ class CFG:
                         mask_fill_value=0, p=0.5),
         # A.Cutout(max_h_size=int(size * 0.6),
         #          max_w_size=int(size * 0.6), num_holes=1, p=1.0),
-        A.Normalize(
-            mean= [0] * in_chans,
-            std= [1] * in_chans
-        ),
+        # A.Normalize(
+        #     mean= [0] * in_chans,
+        #     std= [1] * in_chans
+        # ),
+        # A.Normalize(
+        A.ToFloat(max_value=255.0),
+        # A.Normalize(
+        #     mean=[0.456]*in_chans,   # mean for grayscale, can be 0.5 if unknown
+        #     std=[0.225]*in_chans     # std for grayscale, can be 0.5 as a default guess
+        # ),
         ToTensorV2(transpose_mask=True),
     ]
 
 
     valid_aug_list = [
         A.Resize(size, size),
-        A.Normalize(
-            mean= [0] * in_chans,
-            std= [1] * in_chans
-        ),
+        A.ToFloat(max_value=255.0),
+        # A.Normalize(
+        #     mean= [0] * in_chans,
+        #     std= [1] * in_chans
+        # ),
         ToTensorV2(transpose_mask=True),
     ]
 
@@ -191,6 +198,7 @@ def read_image_mask(fragment_id, start_idx, in_chans):
     start_idx = int(start_idx)
     end_idx = start_idx + in_chans
     idxs = range(start_idx, end_idx)
+    
 
     for i in idxs:
     
@@ -215,10 +223,10 @@ def read_image_mask(fragment_id, start_idx, in_chans):
         # else:
         #     image = cv2.resize(image, (image.shape[1]//1,image.shape[0]//1), interpolation = cv2.INTER_AREA)
             # Resize safely if required
-        if any(sub in fragment_id for sub in ["frag"]):
-            new_h, new_w = image.shape[0]//2, image.shape[1]//2  #5 height, width order corrected
+        if any(sub in fragment_id for sub in ["Frag"]):
+            new_h, new_w = image.shape[0]//1, image.shape[1]//1  #5 height, width order corrected
         else:
-            new_h, new_w = image.shape[0]//1, image.shape[1]//1
+            new_h, new_w = image.shape[0]//2, image.shape[1]//2
         # # HERE RESIZE
         # new_h, new_w = image.shape[0] //2, image.shape[1] //2  # height, width order corrected
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
@@ -231,7 +239,7 @@ def read_image_mask(fragment_id, start_idx, in_chans):
         # image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
         
         # image = image.astype(np.float32) / 255  # Normalize 
-        image=np.clip(image,0,200)
+        # image=np.clip(image,0,200)
         images.append(image)
         
     images = np.stack(images, axis=2)
@@ -310,28 +318,6 @@ def get_transforms(data, cfg):
     return aug
 from skimage.exposure import match_histograms
 
-def histogram_match_block(source_tensor=None, reference_tensor=None, start_slice=0, num_slices=30):
-    """
-    Histogram match a block of `num_slices` starting at `start_slice`.
-    Assumes tensors shape (H, W, D).
-    """
-    assert source_tensor.ndim == 3 and reference_tensor.ndim == 3, "Expected (H, W, D) tensors"
-
-    source_block = source_tensor[:, :, start_slice:start_slice+num_slices].astype(np.float16)
-    reference_block = reference_tensor[:, :, start_slice:start_slice+num_slices].astype(np.float16)
-    
-    # Flatten 3D blocks to 1D
-    source_flat = source_block.flatten()
-    reference_flat = reference_block.flatten()
-    
-    # Perform histogram matching on the entire flattened block
-    matched_flat = match_histograms(source_flat, reference_flat, channel_axis=None)
-    
-    # Reshape back to original block shape
-    matched_block = matched_flat.reshape(source_block.shape)
-
-    return matched_block
-
 class CustomDataset(Dataset):
     def __init__(self, images ,cfg,xyxys=None, labels=None, transform=None, reference_image=None, do_hist_match=False):
         self.images = images
@@ -349,7 +335,7 @@ class CustomDataset(Dataset):
     
     def fourth_augment(self,image):
         image_tmp = np.zeros_like(image)
-        cropping_num = random.randint(CFG.in_chans-6, CFG.in_chans)
+        cropping_num = random.randint(CFG.in_chans-15, CFG.in_chans)
 
         start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
         crop_indices = np.arange(start_idx, start_idx + cropping_num)
@@ -369,29 +355,49 @@ class CustomDataset(Dataset):
         image = image_tmp
         return image
     
-    def shuffle_d_axis(self,image):
-        # image shape: (H, W, D)
-        d = image.shape[2]
-        shuffled_indices = np.arange(d)
-        np.random.shuffle(shuffled_indices)
-
-        # Reorder along D axis
-        image_shuffled = image[:, :, shuffled_indices]
-        return image_shuffled
-
-    
-    def histogram_match(self, image, reference):
+    def z_circular_shift_np(self, volume, max_shift=4, prob=0.5, cutout_size=2, cutout_prob=0.):
         """
-        image, reference: torch tensors of shape (1, H, W)
-        Returns image matched to reference
+        Circularly shift slices along Z-axis (last dim) by a random integer in [-max_shift, max_shift].
+        Then randomly cut out (zero out) a contiguous block of slices along Z-axis.
+        
+        Args:
+            volume: np.ndarray shape (H, W, D) or (C, H, W, D)
+            max_shift: max absolute shift (int). shift=0 means no-op.
+            prob: probability to apply shift
+            cutout_size: number of consecutive slices to cut out
+            cutout_prob: probability to apply cutout
+        
+        Returns:
+            volume after augmentation
         """
-        if image.ndim == 4 and image.shape[0] == 1:  # (1, H, W, D)
-            image = image.squeeze(0)
-        if reference.ndim == 4 and reference.shape[0] == 1:
-            reference = reference.squeeze(0)
 
-        matched = histogram_match_block(image, reference)
-        return matched
+        if (random.random() > prob) or (max_shift == 0):
+            shifted_volume = volume
+        else:
+            D = volume.shape[-1]
+            shift = random.randint(-max_shift, max_shift)
+            if shift == 0:
+                shifted_volume = volume
+            else:
+                shifted_volume = np.roll(volume, shift=shift, axis=-1)
+
+        # Apply cutout with given probability
+        if (random.random() < cutout_prob) and (cutout_size > 0):
+            D = shifted_volume.shape[-1]
+            # Ensure cutout size is not larger than volume depth
+            cutout_size_clamped = min(cutout_size, D)
+            start_idx = random.randint(0, D - cutout_size_clamped)
+            # Zero out the block along the last axis
+            if shifted_volume.ndim == 3:
+                # shape: (H, W, D)
+                shifted_volume[:, :, start_idx:start_idx + cutout_size_clamped] = 0
+            elif shifted_volume.ndim == 4:
+                # shape: (C, H, W, D)
+                shifted_volume[:, :, :, start_idx:start_idx + cutout_size_clamped] = 0
+            else:
+                raise ValueError("Unsupported volume shape for cutout")
+
+        return shifted_volume
 
     def __getitem__(self, idx):
         if self.xyxys is not None:
@@ -409,8 +415,9 @@ class CustomDataset(Dataset):
             image = self.images[idx]
             label = self.labels[idx]
             
-            image=self.fourth_augment(image)
+            # image=self.fourth_augment(image)
             # image = self.shuffle_d_axis(image)
+            image = self.z_circular_shift_np(image)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)
@@ -455,7 +462,7 @@ class RegressionPLModel(pl.LightningModule):
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary')
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+ 0.5*self.loss_func2(x,y)
 
@@ -480,6 +487,8 @@ class RegressionPLModel(pl.LightningModule):
                 print(f"  Unexpected keys: {load_result.unexpected_keys}")
         else:
             print("✅ Backbone weights loaded successfully with no issues.")
+            
+
             
 
         # for param in self.backbone.parameters():
@@ -554,7 +563,7 @@ class RegressionPLModel(pl.LightningModule):
         # self.backbone.load_state_dict(torch.load('checkpoints/frags_extended4_18chans_20240814211913_0_fr_i3depoch=19.ckpt'),strict=False)
         self.decoder = Decoder(encoder_dims=[x.size(1) for x in self.backbone(torch.rand(1,1,CFG.in_chans,256,256))], upscale=1)
         init_weights(self.decoder)
-        self.dropout = nn.Dropout(p=0.3)
+        self.dropout = nn.Dropout(p=0.2)
 
         if self.hparams.with_norm:
             self.normalization=nn.BatchNorm3d(num_features=1)            
@@ -569,7 +578,7 @@ class RegressionPLModel(pl.LightningModule):
         # feat_maps = [self.dropout(f) for f in feat_maps]
         # feat_maps_pooled = [torch.mean(f, dim=2) for f in feat_maps]
         feat_maps_pooled = [torch.max(f, dim=2)[0] for f in feat_maps]
-        feat_maps_pooled = [self.dropout(f) for f in feat_maps_pooled]
+        # feat_maps_pooled = [self.dropout(f) for f in feat_maps_pooled]
         pred_mask = self.decoder(feat_maps_pooled)
         return pred_mask
     # # BACKBONE FORWARD
@@ -635,7 +644,6 @@ class RegressionPLModel(pl.LightningModule):
     #     scheduler =torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-3,pct_start=0.15, steps_per_epoch=self.hparams.total_steps, epochs=50,final_div_factor=1e2)
     #     # scheduler = get_scheduler(CFG, optimizer)
     #     return [optimizer],[scheduler]
-    from torch.optim import AdamW
     
 
     def configure_optimizers(self):
@@ -648,22 +656,22 @@ class RegressionPLModel(pl.LightningModule):
         # Define param groups with different learning rates
         param_groups = [
             {'params': base_params, 'lr': base_lr},
-            {'params': decoder_params, 'lr': base_lr},
+            {'params': decoder_params, 'lr': base_lr*10},
         ]
 
         optimizer = AdamW(param_groups)
         # optimizer = AdamW(self.parameters(), lr=CFG.lr)
-        scheduler =torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-4,pct_start=0.15, steps_per_epoch=self.hparams.total_steps, epochs=50,final_div_factor=1e2)
+        # scheduler =torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-4,pct_start=0.15, steps_per_epoch=self.hparams.total_steps, epochs=50,final_div_factor=1e2)
         # # Scheduler using OneCycleLR with per-param max_lr
-        # scheduler = OneCycleLR(
-        #     optimizer,
-        #     max_lr=[3e-4, 3e-4],  # match param group order
-        #     pct_start=0.1,
-        #     steps_per_epoch=self.hparams.total_steps,
-        #     epochs=50,
-        #     final_div_factor=1e2,
-        #     # cycle_momentum=False,
-        # )
+        scheduler = OneCycleLR(
+            optimizer,
+            max_lr=[3e-4, 3e-3],  # match param group order
+            pct_start=0.1,
+            steps_per_epoch=self.hparams.total_steps,
+            epochs=20,
+            final_div_factor=1e2,
+            cycle_momentum=False,
+        )
 
         return [optimizer], [{'scheduler': scheduler, 'interval': 'step'}]
 
@@ -713,7 +721,7 @@ print(CFG.valid_id)
 fragment_id = CFG.valid_id
 
 valid_mask_gt = cv2.imread(CFG.comp_dataset_path + f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
-valid_mask_gt = cv2.resize(valid_mask_gt, (valid_mask_gt.shape[1]//1, valid_mask_gt.shape[0]//1), interpolation=cv2.INTER_AREA)
+valid_mask_gt = cv2.resize(valid_mask_gt, (valid_mask_gt.shape[1]//2, valid_mask_gt.shape[0]//2), interpolation=cv2.INTER_AREA)
 # pad0 = (CFG.size - valid_mask_gt.shape[0] % CFG.size)
 # pad1 = (CFG.size - valid_mask_gt.shape[1] % CFG.size)
 # valid_mask_gt = np.pad(valid_mask_gt, [(0, pad0), (0, pad1)], constant_values=0)
@@ -759,12 +767,17 @@ for lr in [1e-4,2e-6,1e-4]:
                                         num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
             
             print('Trainloader lenth: ',len(train_loader))
+            
+            for x,y in train_loader:
+                print(x.max())
+                print(x.min())
+                break
 
             run_slug=f'RESNET_{CFG.frags}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}'
 
             wandb_logger = WandbLogger(project="vesivus",name=run_slug+f'{enc}')
             norm=fold==1
-            model=RegressionPLModel(enc='resnet101',pred_shape=pred_shape,size=CFG.size,total_steps=len(train_loader)*2,with_norm=False)
+            model=RegressionPLModel(enc='resnet101',pred_shape=pred_shape,size=CFG.size,total_steps=len(train_loader),with_norm=False)
             
             # # # DION
             # checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/f15_div2_l15-35_20231210132040_0_fr_i3depoch=7-v2.ckpt", map_location="cpu", weights_only=False)
@@ -778,7 +791,7 @@ for lr in [1e-4,2e-6,1e-4]:
                 max_epochs=21,
                 accelerator="gpu",
                 devices=-1,
-                check_val_every_n_epoch=2,
+                check_val_every_n_epoch=4,
                 logger=wandb_logger,
                 default_root_dir="./models",
                 accumulate_grad_batches=1,

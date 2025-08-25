@@ -1,9 +1,0 @@
-lr: 0.0001
-mask_ratio: 0.8
-patch_size: 16
-embed_dim: 768
-decoder_dim: 512
-decoder_layers: 4
-input_T: 16
-input_H: 224
-input_W: 224
