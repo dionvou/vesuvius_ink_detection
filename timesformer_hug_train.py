@@ -53,32 +53,35 @@ class CFG:
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 22
+    start_idx = 20
     in_chans = 16
     
     size = 224
     tile_size = 224
-    stride = tile_size // 16
+    stride = tile_size // 8
     
-    train_batch_size =  15# 32
-    valid_batch_size = 70
+    train_batch_size =  12# 32
+    valid_batch_size = 25
     check_val = 4
     lr = 2e-5
     
     # Change the size of fragments
+    
     frags_ratio1 = ['frag','re']
     frags_ratio2 = ['202','s4','left']
     ratio1 = 2
-    ratio2 = 1
+    ratio2 = 2
     
     # ============== fold =============
-    segments = ['Frag5','20231215151901'] 
-    valid_id = '20231215151901'
+    segments = ['frag5','frag1','20231210132040'] 
+    valid_id = '20231210132040'
+    # segments = ['rect1','remaining1'] 
+    # valid_id = 'rect1'#20231210132040'20231215151901
     
     num_workers = 8
     # ============== model cfg =============
     scheduler = 'cosine' # 'cosine', 'linear'
-    epochs = 30
+    epochs = 50
     warmup_factor = 10
     min_lr = 1e-7
     weight_decay = 1e-6
@@ -132,13 +135,18 @@ path = f"{CFG.segment_path}{fragment_id}/{fragment_id}_inklabels.png"
 valid_mask_gt = Image.open(path).convert("L")
 valid_mask_gt = np.array(valid_mask_gt)
 
+if any(sub in fragment_id for sub in CFG.frags_ratio1):
+    scale = 1 / CFG.ratio1
+    new_w = int(valid_mask_gt.shape[1] * scale)
+    new_h = int(valid_mask_gt.shape[0] * scale)
+    valid_mask_gt = cv2.resize(valid_mask_gt, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+elif any(sub in fragment_id for sub in CFG.frags_ratio2):
+    scale = 1 / CFG.ratio2
+    new_w = int(valid_mask_gt.shape[1] * scale)
+    new_h = int(valid_mask_gt.shape[0] * scale)
+    valid_mask_gt = cv2.resize(valid_mask_gt, (new_w, new_h), interpolation=cv2.INTER_AREA)
 pred_shape=valid_mask_gt.shape
-if (any(sub in fragment_id for sub in CFG.frags_ratio1)):
-    pred_shape = tuple(s // CFG.ratio1 for s in valid_mask_gt.shape)
-elif (any(sub in fragment_id for sub in CFG.frags_ratio2)):
-    pred_shape = tuple(s // CFG.ratio2 for s in valid_mask_gt.shape)
-else:
-    pass
 
 train_images, train_masks, valid_images, valid_masks, valid_xyxys = utils.get_train_valid_dataset(CFG)
 print('train_images',train_images[0].shape)
@@ -168,7 +176,7 @@ wandb_logger = WandbLogger(project="vesivus",name=run_slug)
 model = timesformer_hug.TimesfomerModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger)
 wandb_logger.watch(model, log="all", log_freq=100)
 
-# model = timesformer_hug.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['frag5', '20231215151901']_valid=20231215151901_size=224_lr=2e-05_in_chans=16_epoch=3.ckpt")
+model = timesformer_hug.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['frag5', 'frag1', '20231215151901']_valid=20231215151901_size=224_lr=2e-05_in_chans=16_epoch=7.ckpt")
 trainer = pl.Trainer(
     max_epochs=CFG.epochs,
     accelerator="gpu",
@@ -180,11 +188,11 @@ trainer = pl.Trainer(
     precision='16-mixed',
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
-    strategy='ddp',
+    strategy='ddp_find_unused_parameters_true',
     callbacks=[ModelCheckpoint(filename=f'{run_slug}_'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
     ]
 
 )
-# trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
-trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
+# trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
 wandb.finish()

@@ -115,6 +115,10 @@ class CFG:
         ToTensorV2(transpose_mask=True),
         
     ]
+    pil_transform = T.Compose([
+        T.ToPILImage(),                    # convert (C, H, W) to PIL
+        T.Grayscale(num_output_channels=3),  # convert to 3 channels
+    ])
 
     rotate = A.Compose([A.Rotate(5,p=1)])
     
@@ -239,7 +243,7 @@ def worker_function(fragment_id, CFG):
     return train_images, train_masks, valid_images, valid_masks, valid_xyxys
 
 
-def get_train_valid_dataset(fragment_ids=['remaining1','rect11']):
+def get_train_valid_dataset(fragment_ids=['20231210132040','frag5']):
     threads = []
     results = [None] * len(fragment_ids)
     
@@ -294,30 +298,31 @@ class CustomDataset(Dataset):
         self.rotate=CFG.rotate
         
         self.processor = AutoImageProcessor.from_pretrained("facebook/timesformer-base-finetuned-k600", use_fast=True)
+        # self.processor.do_normalize = False
         self.pil_transform  = CFG.pil_transform
     def __len__(self):
         return len(self.images)
-    def fourth_augment(self,image):
-        image_tmp = np.zeros_like(image)
-        cropping_num = random.randint(8, 16)
+    # def fourth_augment(self,image):
+    #     image_tmp = np.zeros_like(image)
+    #     cropping_num = random.randint(12, 16)
 
-        start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
-        crop_indices = np.arange(start_idx, start_idx + cropping_num)
+    #     start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
+    #     crop_indices = np.arange(start_idx, start_idx + cropping_num)
 
-        start_paste_idx = random.randint(0, self.cfg.in_chans - cropping_num)
+    #     start_paste_idx = random.randint(0, self.cfg.in_chans - cropping_num)
 
-        tmp = np.arange(start_paste_idx, cropping_num)
-        np.random.shuffle(tmp)
+    #     tmp = np.arange(start_paste_idx, cropping_num)
+    #     np.random.shuffle(tmp)
 
-        cutout_idx = random.randint(0, 2)
-        temporal_random_cutout_idx = tmp[:cutout_idx]
+    #     cutout_idx = random.randint(0, 2)
+    #     temporal_random_cutout_idx = tmp[:cutout_idx]
 
-        image_tmp[..., start_paste_idx : start_paste_idx + cropping_num] = image[..., crop_indices]
+    #     image_tmp[..., start_paste_idx : start_paste_idx + cropping_num] = image[..., crop_indices]
 
-        if random.random() > 0.4:
-            image_tmp[..., temporal_random_cutout_idx] = 0
-        image = image_tmp
-        return image
+    #     # if random.random() > 0.4:
+    #     #     image_tmp[..., temporal_random_cutout_idx] = 0
+    #     image = image_tmp
+    #     return image
 
     def __getitem__(self, idx):
         if self.xyxys is not None: #VALID
@@ -558,8 +563,8 @@ class RegressionPLModel(pl.LightningModule):
         x,y,xyxys= batch
         batch_size = x.size(0)
         outputs = self(x)
-        print(outputs.shape)
-        print(y.shape)
+        # print(outputs.shape)
+        # print(y.shape)
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
@@ -661,7 +666,7 @@ def scheduler_step(scheduler, avg_val_loss, epoch):
 
 torch.set_float32_matmul_precision('medium')
 
-fragments=['rect11'] # valid fragment
+fragments=['20231210132040'] # valid fragment
 for fid in fragments:
     CFG.valid_id=fid
     fragment_id = CFG.valid_id
@@ -703,7 +708,7 @@ for fid in fragments:
     trainer = pl.Trainer(
         max_epochs=100,
         accelerator="gpu",
-        check_val_every_n_epoch=2,
+        check_val_every_n_epoch=4,
         devices=-1,
         logger=wandb_logger,
         default_root_dir="./models",

@@ -28,9 +28,19 @@ def read_image_mask(fragment_id, CFG=None):
     idxs = range(start_idx, end_idx)
     image_shape = 0
     
-    if fragment_id.startswith("Frag"):
-        print("Fraggggggggggggggggggggggggggggggggggggggggggggggggggggggggg")
-        idxs = range(19, 19 + CFG.in_chans)
+    # if fragment_id.startswith("frag5"):
+    #     print("Fraggggggggggggggggggggggggggggggggggggggggggggggggggggggggg")
+    #     idxs = range(19, 19 + CFG.in_chans)
+    # if fragment_id.startswith("frag1"):
+    #     print("Fraggggggggggggggggggggggggggggggggggggggggggggggggggggggggg")
+    #     idxs = range(28, 28 + CFG.in_chans)
+        
+        
+    # if fragment_id.startswith("202"):
+    #     idxs = range(15, 45)
+    # idxs = range(15, 46, 2)
+
+        
 
 
     for i in tqdm(idxs):
@@ -62,11 +72,20 @@ def read_image_mask(fragment_id, CFG=None):
             new_h = int(image.shape[0] * scale)
             image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-        image=np.clip(image,30,200)
+        # image=np.clip(image,20,200)
         images.append(image)
         
+    
+    # from scipy.ndimage import zoom
+
     images = np.stack(images, axis=2)
     print(f" Shape of {fragment_id} segment: {images.shape}")
+    
+    # if fragment_id.startswith("202"):
+    #     # images shape: (H, W, 30)
+    #     scale = (1, 1, 15/30)   # keep H, W the same; shrink axis=2 by 0.5
+    #     images = zoom(images, scale, order=1)  # order=1 → bilinear interpolation
+
    
     # # READ INK LABELS
     inklabel_files = glob.glob(f"{CFG.segment_path}/{fragment_id}/*inklabels.*")
@@ -123,23 +142,47 @@ def get_train_valid_dataset(CFG=None):
             for b in x1_list:
                 if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size] == 0):
                     
-                    if fragment_id =='s4':
-                        # if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.95):
-                            for yi in range(0, CFG.tile_size, CFG.size):
-                                for xi in range(0, CFG.tile_size, CFG.size):
-                                    y1 = a + yi
-                                    x1 = b + xi
-                                    y2 = y1 + CFG.size
-                                    x2 = x1 + CFG.size
-                                    tile_mask = mask[y1:y2, x1:x2, None].copy()  # copy the patch
-                                    all_gray = np.all((tile_mask > 0.01) & (tile_mask < 0.99))
-                                    if not all_gray:
-                                        # Set all pixels where mask==0 to IGNORE INDEX, keep 1s as is
-                                        tile_mask[(tile_mask <1) & (tile_mask>0.01)] = 127 # mask
-                                        train_images.append(image[y1:y2, x1:x2])
-                                        train_masks.append(tile_mask)
-                                        windows_dict[(y1, y2, x1, x2)] = '1'
-                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
+                    # if fragment_id =='s4212':
+                    #     # if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.95):
+                    #         for yi in range(0, CFG.tile_size, CFG.size):
+                    #             for xi in range(0, CFG.tile_size, CFG.size):
+                    #                 y1 = a + yi
+                    #                 x1 = b + xi
+                    #                 y2 = y1 + CFG.size
+                    #                 x2 = x1 + CFG.size
+                    #                 tile_mask = mask[y1:y2, x1:x2, None].copy()  # copy the patch
+                    #                 all_gray = np.all((tile_mask > 0.01) & (tile_mask < 0.99))
+                    #                 if not all_gray:
+                    #                     # Set all pixels where mask==0 to IGNORE INDEX, keep 1s as is
+                    #                     tile_mask[(tile_mask <1) & (tile_mask>0.01)] = 127 # mask
+                    #                     train_images.append(image[y1:y2, x1:x2])
+                    #                     train_masks.append(tile_mask)
+                    #                     windows_dict[(y1, y2, x1, x2)] = '1'
+                    #                     assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
+                    if fragment_id == 's4121124252':
+                        print("kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk")
+                        for yi in range(0, CFG.tile_size, CFG.size):
+                            for xi in range(0, CFG.tile_size, CFG.size):
+                                y1 = a + yi
+                                x1 = b + xi
+                                y2 = y1 + CFG.size
+                                x2 = x1 + CFG.size
+
+                                tile_mask = mask[y1:y2, x1:x2, None].copy()  # copy the patch
+
+                                # ✅ Check if tile is all 1s or all 0s
+                                all_ones = np.all(tile_mask == 1)
+                                all_zeros = np.all(tile_mask == 0)
+
+                                if all_ones or all_zeros:
+
+                                    train_images.append(image[y1:y2, x1:x2])
+                                    train_masks.append(tile_mask)
+                                    windows_dict[(y1, y2, x1, x2)] = '1'
+
+                                    assert image[y1:y2, x1:x2].shape == (CFG.size, CFG.size, CFG.in_chans)
+                                    
+
                     elif fragment_id == CFG.valid_id or not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size] < 0.05):
                         for yi in range(0, CFG.tile_size, CFG.size):
                             for xi in range(0, CFG.tile_size, CFG.size):

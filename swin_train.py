@@ -52,35 +52,35 @@ class CFG:
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 20
-    in_chans = 16
+    start_idx = 24
+    in_chans = 8
     
     size = 224
     tile_size = 224
     stride = tile_size // 8
-    
-    train_batch_size =  15 # 32
-    valid_batch_size = 35
+
+    train_batch_size = 12# 32
+    valid_batch_size = 25
     lr = 5e-5
     # ============== model cfg =============
-    scheduler = 'linear'#'cosine', 'linear'
-    epochs = 25
+    scheduler = 'cosine'#'cosine', 'linear'
+    epochs = 200
     
     # Change the size of fragments
-    frags_ratio1 = ['frag','re']
+    frags_ratio1 = ['frag']
     frags_ratio2 = ['s4','202','Frag']
     ratio1 = 2
     ratio2 = 1
     
     # ============== fold =============
-    segments = ['frag5','20231215151901'] 
-    valid_id = '20231215151901'#20231215151901'
+    segments = ['rect5','remaining5'] 
+    valid_id = 'rect5'#20231210132040'
     norm = False
     aug = None
     # ============== fixed =============
     min_lr = 1e-7
     weight_decay = 1e-6
-    max_grad_norm = 100
+    max_grad_norm = 1
     num_workers = 8
     warmup_factor = 10
 
@@ -127,20 +127,20 @@ if wandb.run is not None:
 t=0       
 utils.cfg_init(CFG)
 torch.set_float32_matmul_precision('medium')
-for batch in [25]:
-
-    for lr in [5e-5,2e-5]:
-        for norm in [False,False]:
-            for aug in ['shift','shuffle',None,'fourth',]:
-                for frags in [['Frag5','20231215151901'],['Frag1','20231215151901']]:
+for batch in [1]:
+    for lr in [2e-5]:
+        for norm in [False]:
+            for aug in ['shuffle']:#,'shuffle','shift','fourth']:#,'shuffle','fourth',]:
+                for frags in [['rects4','frag5','20231210132040']]:#,['frag1','frag5','20231210132040']]:20231215151901
                     t=t+1
-                    CFG.segments = frags
+                    
                     CFG.norm = norm
                     CFG.lr = lr
                     CFG.aug = aug
-                    # CFG.train_batch_size = batch
+                    CFG.segments = frags
+                    CFG.valid_id = frags[-1]
+                    # CFG.ratio2 = batch
                 
-
                     fragment_id = CFG.valid_id
                     run_slug=f'{t}_SWIN_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans},norm={CFG.norm},fourth={CFG.aug}'
 
@@ -193,7 +193,7 @@ for batch in [25]:
                     model = swin.SwinModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger,freeze=False)
                     wandb_logger.watch(model, log="all", log_freq=50)
 
-                    # model = swin.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/SWIN_['frag5', '20231210132040']_valid=20231210132040_size=224_lr=2e-05_in_chans=16_epoch=5.ckpt")
+                    # model = swin.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/1_SWIN_['frag5', '20231215151901']_valid=20231215151901_size=224_lr=2e-05_in_chans=8,norm=False,fourth=shift_epoch=7.ckpt")
                     trainer = pl.Trainer(
                         max_epochs=CFG.epochs,
                         accelerator="gpu",

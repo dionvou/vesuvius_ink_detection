@@ -40,12 +40,18 @@ class TimesformerDataset(Dataset):
         self.xyxys=xyxys
         
         self.processor = AutoImageProcessor.from_pretrained("facebook/timesformer-base-finetuned-k600", use_fast=True)
+        self.processor.do_resize = False
+        self.processor.size = {"height": cfg.size, "width": cfg.size}
         self.pil_transform  = pil_transform
+        self.video_transform = T.Compose([
+            T.ConvertImageDtype(torch.float32), 
+            # T.Normalize(mean=[0.45, 0.45, 0.45], std=[0.225, 0.225, 0.225])
+            ])
         
     def __len__(self):
         return len(self.images)
     
-    def fourth_augment(self,image, in_chans=32):
+    def fourth_augment(self,image, in_chans=8):
         image_tmp = np.zeros_like(image)
         cropping_num = random.randint(in_chans-6, in_chans)
 
@@ -77,7 +83,7 @@ class TimesformerDataset(Dataset):
         image_shuffled = image[:, :, shuffled_indices]
         return image_shuffled
     
-    def z_circular_shift_np(self, volume, max_shift=5, prob=0.5, cutout_size=4, cutout_prob=0.5):
+    def z_circular_shift_np(self, volume, max_shift=4, prob=0.5, cutout_size=1, cutout_prob=0.5):
         """
         Circularly shift slices along Z-axis (last dim) by a random integer in [-max_shift, max_shift].
         Then randomly cut out (zero out) a contiguous block of slices along Z-axis.
@@ -132,16 +138,9 @@ class TimesformerDataset(Dataset):
                 label=F.interpolate(label.unsqueeze(0),(self.cfg.size//16,self.cfg.size//16)).squeeze(0)
             
             image = image.permute(1,0,2,3)
-            frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
-
-            # now run the Timesformer processor ONCE:
-            encoding = self.processor(
-                [frame for frame in frames],   # list of PIL
-                return_tensors='pt'
-                )
-            # encoding["pixel_values"] is (1, T, C, H, W)
-            pixel_values = encoding["pixel_values"].squeeze(0)
-            return pixel_values, label,xy
+            image = image.repeat(1, 3, 1, 1)
+            image = torch.stack([self.video_transform(f) for f in image])
+            return image, label,xy
         else:
             image = self.images[idx]
             label = self.labels[idx]
@@ -157,15 +156,15 @@ class TimesformerDataset(Dataset):
                 label=F.interpolate(label.unsqueeze(0),(self.cfg.size//16,self.cfg.size//16)).squeeze(0)
                 
             image = image.permute(1,0,2,3)
-            frames = [self.pil_transform(frame.squeeze(0)) for frame in image] 
-
-            encoding = self.processor(
-                [frame for frame in frames],   # list of PIL
-                return_tensors='pt'
-                )
-            pixel_values = encoding["pixel_values"].squeeze(0)
+            image = image.repeat(1, 3, 1, 1)
+            image = torch.stack([self.video_transform(f) for f in image]) # list of frames
+            # print('image',image.shape)
+            return image, label
+                
             
-            return pixel_values, label
+            
+
+
 
 class TimesfomerModel(pl.LightningModule):
     def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None):
@@ -180,21 +179,72 @@ class TimesfomerModel(pl.LightningModule):
         self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
-    
-        self.backbone=TimeSformer(img_size=224, num_classes=0, num_frames=32,attention_type='divided_space_time', in_chans=3)
-        checkpoint = torch.load('checkpoints/TimeSformer_divST_32x32_224_HowTo100M.pyth')
+        
+        # # self.backbone=TimeSformer(img_size=128, num_classes=0, num_frames=4,attention_type='divided_space_time', in_chans=3)
+        # from timesformer.models.vit import default_cfgs
+
+        # # Add a config for patch 4
+        # default_cfgs['vit_base_patch4_224'] = ''
+
+
+        # # Now you can safely instantiate the backbone
+        # self.backbone = TimeSformer(
+        #     img_size=224,
+        #     num_classes=0,
+        #     num_frames=96,
+        #     attention_type='divided_space_time',
+        #     in_chans=3,
+        #     patch_size=4
+        # )
+        # self.backbone.default_cfg = checkpoint['config']
+        # self.backbone = TimeSformer(img_size=224, num_classes=0, num_frames=96, attention_type='divided_space_time')#,  pretrained_model='checkpoints/TimeSformer_divST_96x4_224_K600.pyth')
+        # Freeze all backbone parameters
+        # print(self.backbone)
+        # checkpoint = torch.load(
+        #     'checkpoints/TimeSformer_divST_96x4_224_K600.pyth',
+        #     map_location='cpu',
+        #     weights_only=False  # ✅ important!
+        # )
+        self.backbone=TimeSformer(img_size=224, num_classes=0, num_frames=96,attention_type='divided_space_time', in_chans=3)
+        # # self.backbone.default_cfgs['vit_base_patch4_224'] = self.backbone.default_cfgs['vit_base_patch16_224'].copy()
+
+        # checkpoint = torch.load('checkpoints/TimeSformer_divST_8x32_224_HowTo100M.pyth')
+        checkpoint = torch.load('checkpoints/TimeSformer_divST_96x4_224_K600.pyth')
+        
         state_dict = checkpoint['model_state']
+        # print("Original checkpoint keys:", list(state_dict.keys()))
         state_dict.pop('model.head.weight', None)
         state_dict.pop('model.head.bias', None)
+        # # 3️⃣ Interpolate temporal positional embeddings
+        # def interpolate_temporal_pos_embed(model, state_dict, new_num_frames):
+        #     pos_embed_ckpt = state_dict['pos_embed']      # (1, N+1, C)
+        #     cls_token = pos_embed_ckpt[:, 0:1, :]
+        #     patch_pos = pos_embed_ckpt[:, 1:, :]         # (1, N, C)
+            
+        #     N = patch_pos.shape[1]
+        #     T_old = 96                                   # checkpoint frames
+        #     H_W = N // T_old
+            
+        #     patch_pos = patch_pos.view(1, T_old, H_W, -1)
+        #     patch_pos = F.interpolate(patch_pos, size=(new_num_frames, H_W), mode='bilinear', align_corners=False)
+        #     patch_pos = patch_pos.view(1, new_num_frames * H_W, -1)
+            
+        #     state_dict['pos_embed'] = torch.cat([cls_token, patch_pos], dim=1)
+
+        # interpolate_temporal_pos_embed(self.backbone, state_dict, 8)
+
+        # 4️⃣ Load state_dict
+        # self.backbone.load_state_dict(state_dict, strict=False)
+        # print("Weights loaded with interpolated temporal embeddings!")
 
         try:
-            self.backbone.load_state_dict(state_dict, strict=True)
+            self.backbone.load_state_dict(state_dict, strict=False)
             print("Backbone weights loaded successfully.")
         except RuntimeError as e:
             print(f"Failed to load backbone weights: {e}")
         
         self.classifier = nn.Sequential(
-            nn.Linear(768, (self.hparams.size // 16)**2)
+            nn.Linear(768, (self.hparams.size //16)**2)
         )
         
     def forward(self, x):
@@ -240,13 +290,51 @@ class TimesfomerModel(pl.LightningModule):
 
         param_groups = [
             {'params': other_params, 'lr': self.hparams.lr},
-            {'params': head_params, 'lr': self.hparams.lr*10 },  # 10x LR for the head
+            {'params': head_params, 'lr': self.hparams.lr },  # 10x LR for the head
         ]
 
         optimizer = AdamW(param_groups)
     
         scheduler = get_scheduler(optimizer,scheduler=self.hparams.scheduler)
         return [optimizer], [scheduler]
+    # def configure_optimizers(self):
+    #     weight_decay = 0.001
+    #     base_lr = self.hparams.lr
+
+    #     # 1️⃣ Backbone parameters in their own group
+    #     backbone_params = list(self.backbone.backbone.parameters())
+
+    #     # 2️⃣ Everything else (decoder, head, etc.)
+    #     other_params = [
+    #         p for n, p in self.backbone.named_parameters()
+    #         if p.requires_grad and not any(k in n for k in ["backbone"])
+    #     ]
+
+    #     # 3️⃣ Sanity checks
+    #     assert len(other_params) > 0, "No parameters found for 'other_params' group"
+    #     assert len(backbone_params) > 0, "No parameters found for 'backbone_params' group"
+        
+    #     total_params = sum(p.numel() for p in self.backbone.parameters() if p.requires_grad)
+    #     backbone_count = sum(p.numel() for p in backbone_params)
+    #     other_count = sum(p.numel() for p in other_params)
+
+    #     assert backbone_count + other_count == total_params, \
+    #         f"Mismatch: total={total_params}, backbone={backbone_count}, other={other_count}"
+
+    #     # 4️⃣ Define param groups
+    #     param_groups = [
+    #         {"params": other_params, "lr": base_lr, "weight_decay": weight_decay},
+    #         {"params": backbone_params, "lr": base_lr, "weight_decay": weight_decay},
+    #     ]
+
+    #     # 5 4Optimizer
+    #     optimizer = AdamW(param_groups)
+
+    #     # 6 Scheduler
+    #     scheduler = get_scheduler(optimizer, scheduler="cosine", epochs=15)
+
+    #     return [optimizer], [scheduler]
+
 
         
     def on_validation_epoch_end(self):
@@ -299,7 +387,7 @@ def load_weights(model, ckpt_path, strict=True, map_location='cpu'):
         new_key = k.replace("model.", "") if k.startswith("model.") else k
         new_state_dict[new_key] = v
 
-    missing_keys, unexpected_keys = model.load_state_dict(new_state_dict, strict=strict)
+    missing_keys, unexpected_keys = model.load_state_dict(new_state_dict, strict=strict,weights_only=True)
     
     print("Loaded checkpoint from:", ckpt_path)
     print("Missing keys:", missing_keys)
