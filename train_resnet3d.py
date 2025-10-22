@@ -53,9 +53,10 @@ from warmup_scheduler import GradualWarmupScheduler
 from scipy import ndimage
 from models.resnetall import generate_model
 import PIL.Image
-from PIL import Image
+from PIL import Image, ImageOps
 from skimage.transform import resize
 import tifffile as tiff
+from models import unetr
 
 PIL.Image.MAX_IMAGE_PIXELS = 933120000
 class CFG:
@@ -71,8 +72,8 @@ class CFG:
     exp_name = 'pretraining_all'
     
     # ============== model cfg =============
-    frags = ['20231210132040','frag1','frag5']#,'20231210132040']#'frag1',
-    valid_id = '20231210132040'#'20240304141530'#'20231210132040'
+    frags = ['20231215151901','frag1']#'frag5','frag1']#,'20231215151901']#'frag1',
+    valid_id = '20231215151901'#'20240304141530'#'20231210132040',20240716140050
     backbone='resnet3d'
     # ============== training cfg =============
     size = 256
@@ -87,12 +88,12 @@ class CFG:
     
     start_idx = 15
     in_chans = 30
+    valid_chans = 24
     
-    epochs = 21 # 30
+    epochs = 40 # 30
     lr = 2e-5
     # ============== fold =============
     
-
     # ============== fixed =============
     pretrained = True
 
@@ -117,29 +118,29 @@ class CFG:
 
        # ============== augmentation =============
     train_aug_list = [
-        # A.RandomResizedCrop(
-        #     size, size, scale=(0.85, 1.0)),
         A.Resize(size, size),
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
-        # A.RandomRotate90(p=0.6),
 
         A.RandomBrightnessContrast(p=0.75),
-        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.1,p=0.75),
+        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.3,p=0.75),
         A.OneOf([
                 A.GaussNoise(var_limit=[10, 50]),
                 A.GaussianBlur(),
                 A.MotionBlur(),
                 ], p=0.4),
-        # A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
-        A.CoarseDropout(max_holes=4, max_width=int(size * 0.2), max_height=int(size * 0.2), 
+        A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
+        A.CoarseDropout(max_holes=15, max_width=int(size * 0.05), max_height=int(size * 0.05), 
                         mask_fill_value=0, p=0.5),
-        # A.Cutout(max_h_size=int(size * 0.6),
-        #          max_w_size=int(size * 0.6), num_holes=1, p=1.0),
+        # A.Normalize(
+        #     mean=(0.5),
+        #     std=(0.5),
+        # ),
         A.Normalize(
-            mean= [0] * 24,
-            std= [1] * 24
+            mean= [0] * valid_chans,
+            std= [1] *valid_chans
         ),
+
         ToTensorV2(transpose_mask=True),
     ]
 
@@ -148,9 +149,14 @@ class CFG:
         A.Resize(size, size),
         # A.ToFloat(max_value=255.0),
         A.Normalize(
-            mean= [0] * 24,
-            std= [1] * 24
+            mean= [0] * valid_chans,
+            std= [1] *valid_chans
         ),
+        # A.ToFloat(max_value=255.0),  # same as ConvertImageDtype(torch.float32)
+        # A.Normalize(
+        #     mean=(0.5),
+        #     std=(0.5),
+        # ),
         ToTensorV2(transpose_mask=True),
     ]
 
@@ -196,6 +202,13 @@ def read_image_mask(fragment_id, start_idx, in_chans):
     start_idx = int(start_idx)
     end_idx = start_idx + in_chans
     idxs = range(start_idx, end_idx)
+    
+    if fragment_id==CFG.valid_id:
+        print('valid')
+        start_idx = int(start_idx+(CFG.in_chans-CFG.valid_chans)//2)
+        end_idx = start_idx + CFG.valid_chans
+        idxs = range(start_idx, end_idx)
+        print(start_idx)
 
     for i in idxs:
     
@@ -213,22 +226,19 @@ def read_image_mask(fragment_id, start_idx, in_chans):
         # elif  os.path.exists(jpg_path):
         #     image = cv2.imread(f"train_scrolls/{fragment_id}/layers/{i:02}.jpg", 0)
         # else:
-            image = cv2.imread(f"train_scrolls/{fragment_id}/layers/{i:02}.png", 0)
-            
-        # pad0 = (256 - image.shape[0] % 256)
-        # pad1 = (256 - image.shape[1] % 256)
-        # image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
+            image = cv2.imread(f"train_scrolls/{fragment_id}/layers/{i:02}.jpg", 0)
 
         # if (any(sub in fragment_id for sub in  ["frag", "rect", "remaining","202","left"])):
         #     image = cv2.resize(image, (image.shape[1]//2,image.shape[0]//2), interpolation = cv2.INTER_AREA)
         # else:
         #     image = cv2.resize(image, (image.shape[1]//1,image.shape[0]//1), interpolation = cv2.INTER_AREA)
             # Resize safely if required
-        if any(sub in fragment_id for sub in ["frag",'re']):
+        if any(sub in fragment_id for sub in ["frag"]):
             new_h, new_w = int(image.shape[0] / 2), int(image.shape[1] / 2)
-        elif any(sub in fragment_id for sub in ["202"]):
+        elif any(sub in fragment_id for sub in ["202",'s4']):
             new_h, new_w = int(image.shape[0] / 2), int(image.shape[1] / 2)
-
+        else:
+            new_h, new_w = int(image.shape[0]/1), int(image.shape[1]/1)
             
             
         # # HERE RESIZE
@@ -240,15 +250,19 @@ def read_image_mask(fragment_id, start_idx, in_chans):
         
         # pad0 = (CFG.size - image.shape[0] % CFG.size)
         # pad1 = (CFG.size - image.shape[1] % CFG.size) % CFG.size
+        # pad0 = (CFG.size - image.shape[0] % CFG.size) % CFG.size
+        # pad1 = (CFG.size - image.shape[1] % CFG.size) % CFG.size
+        # image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
 
         # image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
         # image = image.astype(np.float32) / 255  # Normalize 
-        image=np.clip(image,20,200)
+        if fragment_id=='s4n':
+            image = cv2.flip(image, 1)  # 1 means horizontal flip
+        image=np.clip(image,0,200)
         images.append(image)
         
     images = np.stack(images, axis=2)
-    print(images.shape)
-    
+    print('shape',images.shape)
     
     # if fragment_id == 'left':
     # images=images[:,:,::-1]
@@ -264,10 +278,10 @@ def read_image_mask(fragment_id, start_idx, in_chans):
     # if fragment_id =='s4':
     #     mask = cv2.resize(mask, (images.shape[1], images.shape[0]), interpolation=cv2.INTER_AREA)
     # else:
-    fragment_mask = cv2.resize(fragment_mask, image_shape, interpolation = cv2.INTER_AREA)
+    fragment_mask = cv2.resize(fragment_mask, image_shape, interpolation = cv2.INTER_NEAREST)
     # mask = cv2.resize(mask , (mask.shape[1]//2,mask.shape[0]//2), interpolation = cv2.INTER_AREA)
-    mask = cv2.resize(mask , image_shape, interpolation=cv2.INTER_AREA)
-        # mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
+    mask = cv2.resize(mask , image_shape, interpolation=cv2.INTER_NEAREST)
+    # mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
     mask = mask.astype('float32')
     mask/=255 # Binarize
     
@@ -302,23 +316,38 @@ def get_train_valid_dataset():
                         x1=b+xi
                         y2=y1+CFG.size
                         x2=x1+CFG.size
+                        # if fragment_id =='s4':
+                        #     if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.95):
+                        #         for yi in range(0, CFG.tile_size, CFG.size):
+                        #             for xi in range(0, CFG.tile_size, CFG.size):
+                        #                 y1 = a + yi
+                        #                 x1 = b + xi
+                        #                 y2 = y1 + CFG.size
+                        #                 x2 = x1 + CFG.size
+                        #                 tile_mask = mask[y1:y2, x1:x2, None].copy()  # copy the patch
+                        #                 all_gray = np.all((tile_mask < 0.5))
+                        #                 if not all_gray:
+                        #                     # Set all pixels where mask==0 to IGNORE INDEX, keep 1s as is
+                        #                     # tile_mask[(tile_mask <1) & (tile_mask>0.01)] = 127 # mask
+                        #                     train_images.append(image[y1:y2, x1:x2])
+                        #                     train_masks.append(tile_mask)
+                        #                     windows_dict[(y1, y2, x1, x2)] = '1'
+                        #                     assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
                         if fragment_id!=CFG.valid_id:
                             if (y1,y2,x1,x2) not in windows_dict:
                                 if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.01):
                                     if not np.any(fragment_mask[a:a+ CFG.tile_size, b:b + CFG.tile_size]==0):
                                         train_images.append(image[y1:y2, x1:x2])
-                                        
                                         train_masks.append(mask[y1:y2, x1:x2, None])
                                         assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
                                         windows_dict[(y1,y2,x1,x2)]='1'
-                        if fragment_id==CFG.valid_id:
+                        elif fragment_id==CFG.valid_id:
                             if (y1,y2,x1,x2) not in windows_dict:
                                 if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]==0):
                                         valid_images.append(image[y1:y2, x1:x2])
                                         valid_masks.append(mask[y1:y2, x1:x2, None])
-
                                         valid_xyxys.append([x1, y1, x2, y2])
-                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
+                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.valid_chans)
                                         windows_dict[(y1,y2,x1,x2)]='1'
 
 
@@ -370,7 +399,8 @@ class CustomDataset(Dataset):
         Custom channel augmentation that returns exactly 24 channels.
         """
         # always select 24 channels
-        cropping_num = 24
+        remove_n = 0
+        cropping_num = CFG.valid_chans + remove_n
 
         # pick crop indices
         start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
@@ -378,76 +408,63 @@ class CustomDataset(Dataset):
 
         # pick where to paste them
         start_paste_idx = random.randint(0, self.cfg.in_chans - cropping_num)
-
+        
         # container
         image_tmp = np.zeros_like(image)
-
-        # paste cropped channels
         image_tmp[..., start_paste_idx:start_paste_idx + cropping_num] = image[..., crop_indices]
+        
+        # --- remove 2 random channels (instead of blacking out) ---
+        all_indices = np.arange(start_paste_idx, start_paste_idx + cropping_num)
+        remove_idx = np.random.choice(all_indices, remove_n, replace=False)
 
-        # optional random cutout
-        cutout_idx = random.randint(0, 2)
+        # keep all except removed ones
+        keep_idx = np.array([i for i in all_indices if i not in remove_idx])
+        image_tmp = image_tmp[..., keep_idx]
+
+        return image_tmp
+
+        # # paste cropped channels
+        # image_tmp[..., start_paste_idx:start_paste_idx + cropping_num] = image[..., crop_indices]
+        
+        #  # optional random cutout
+        # cutout_idx = 2
+        # temporal_random_cutout_idx = np.arange(start_paste_idx, start_paste_idx + cutout_idx)
+        
+        #     image_tmp[..., temporal_random_cutout_idx] = 0
+
+
+        # # optional random cutout
+        # cutout_idx = random.randint(0, 2)
         # temporal_random_cutout_idx = np.arange(start_paste_idx, start_paste_idx + cutout_idx)
         # if random.random() > 0.4:
         #     image_tmp[..., temporal_random_cutout_idx] = 0
 
         # finally, keep only 24 channels
-        image = image_tmp[..., start_paste_idx:start_paste_idx + cropping_num]
+        # image = image_tmp[..., start_paste_idx:start_paste_idx + cropping_num]
 
-        return image
+        # return image
 
-
-    
-    def z_circular_shift_np(self, volume, max_shift=8, prob=0.5, cutout_size=1, cutout_prob=0.2):
+    def shuffle(self, image):
         """
-        Circularly shift slices along Z-axis (last dim) by a random integer in [-max_shift, max_shift].
-        Then randomly cut out (zero out) a contiguous block of slices along Z-axis.
-        
-        Args:
-            volume: np.ndarray shape (H, W, D) or (C, H, W, D)
-            max_shift: max absolute shift (int). shift=0 means no-op.
-            prob: probability to apply shift
-            cutout_size: number of consecutive slices to cut out
-            cutout_prob: probability to apply cutout
-        
-        Returns:
-            volume after augmentation
+        Channel shuffle augmentation that returns exactly 24 channels.
         """
+        # Shuffle channels randomly
+        shuffled_indices = np.random.permutation(self.cfg.valid_chans)
+        image_shuffled = image[..., shuffled_indices]
 
-        if (random.random() > prob) or (max_shift == 0):
-            shifted_volume = volume
-        else:
-            D = volume.shape[-1]
-            shift = random.randint(-max_shift, max_shift)
-            if shift == 0:
-                shifted_volume = volume
-            else:
-                shifted_volume = np.roll(volume, shift=shift, axis=-1)
+        # Keep only the first 24 (or self.cfg.valid_chans)
+        cropping_num = self.cfg.valid_chans
+        image_shuffled = image_shuffled[..., :cropping_num]
 
-        # Apply cutout with given probability
-        if (random.random() < cutout_prob) and (cutout_size > 0):
-            D = shifted_volume.shape[-1]
-            # Ensure cutout size is not larger than volume depth
-            cutout_size_clamped = min(cutout_size, D)
-            start_idx = random.randint(0, D - cutout_size_clamped)
-            # Zero out the block along the last axis
-            if shifted_volume.ndim == 3:
-                # shape: (H, W, D)
-                shifted_volume[:, :, start_idx:start_idx + cutout_size_clamped] = 0
-            elif shifted_volume.ndim == 4:
-                # shape: (C, H, W, D)
-                shifted_volume[:, :, :, start_idx:start_idx + cutout_size_clamped] = 0
-            else:
-                raise ValueError("Unsupported volume shape for cutout")
+        return image_shuffled
 
-        return shifted_volume
 
     def __getitem__(self, idx):
         if self.xyxys is not None:
             image = self.images[idx]
             label = self.labels[idx]
             xy=self.xyxys[idx]
-            image=self.fourth_augment(image)
+            
             if self.transform:
                 data = self.transform(image=image, mask=label)
                 image = data['image'].unsqueeze(0)
@@ -459,8 +476,7 @@ class CustomDataset(Dataset):
             label = self.labels[idx]
             
             image=self.fourth_augment(image)
-            # image = self.shuffle_d_axis(image)
-            # image = self.z_circular_shift_np(image)
+            # image = self.shuffle(image)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)
@@ -498,26 +514,27 @@ class Decoder(nn.Module):
         return mask
 
 class RegressionPLModel(pl.LightningModule):
-    def __init__(self,pred_shape,size=CFG.size,enc='',with_norm=False,total_steps=780):
+    def __init__(self,pred_shape,size=CFG.size,enc='',with_norm=False,total_steps=780,a=0.7,b=0.3, smooth = 0.25, dropout=0., max=True):
         super(RegressionPLModel, self).__init__()
 
         self.save_hyperparameters()
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary')
-        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.05)
-        self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+ 0.5*self.loss_func2(x,y)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth = self.hparams.smooth)
+        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=self.hparams.smooth)
+        self.loss_func= lambda x,y: self.hparams.a * self.loss_func1(x,y) + self.hparams.b*self.loss_func2(x,y)
+
         
         self.backbone = generate_model(model_depth=101, n_input_channels=1,forward_features=True,n_classes=1039)
+        # self.backbone = unetr.MiniUNETR(img_shape=(16, 128, 128),output_dim=1,input_dim=1)
         state_dict=torch.load('./checkpoints/r3d101_KM_200ep.pth')["state_dict"]
         conv1_weight = state_dict['conv1.weight']
         state_dict['conv1.weight'] = conv1_weight.sum(dim=1, keepdim=True)
         self.backbone.load_state_dict(state_dict,strict=False)
         # self.backbone=InceptionI3d(in_channels=1,num_classes=512,non_local=True)
-        # # self.backbone.load_state_dict(torch.load('./pretraining_i3d_epoch=3.pt'),strict=False)
+        # self.backbone.load_state_dict(torch.load('./pretraining_i3d_epoch=3.pt'),strict=False)
         self.decoder = Decoder(encoder_dims=[x.size(1) for x in self.backbone(torch.rand(1,1,20,256,256))], upscale=1)
-            
         # for param in self.backbone.parameters():
         #     param.requires_grad = False
 
@@ -528,24 +545,40 @@ class RegressionPLModel(pl.LightningModule):
         #     ignore_mismatched_sizes=True,
         #     num_channels=3
         # )        
+        # for param in self.encoder_2d.parameters():
+        #     param.requires_grad = False
 
         # init_weights(self.decoder)
         self.dropout = nn.Dropout(0.2)
-        # self.normalization = nn.batchnono
-        # self.normalization = nn.InstanceNorm3d(1)
-        # self.normalization = nn.BatchNorm3d(1)
+        self.drop3d = nn.Dropout3d(p=0.2)  # 20% chance to drop entire channels
 
+        self.normalization=nn.BatchNorm3d(num_features=1)
+
+        # BACKBONE FORWARD
+    # def forward(self, x):
+    #     # if x.ndim==4:
+    #     #     x=x[:,None]
+    #     # if self.hparams.with_norm:
+    #     #   x=self.normalization(x)
+    #     feat_maps = self.backbone(x) 
+    #     pred_mask = torch.mean(feat_maps, dim=2)
+    #     # feat_maps_pooled = [torch.max(f, dim=2)[0]  for f in feat_maps]
+    #     # feat_maps_pooled = [self.dropout(f).contiguous() for f in feat_maps_pooled]
+
+    #     # pred_mask = self.decoder(feat_maps_pooled)
+    #     return pred_mask   
     
     # BACKBONE FORWARD
     def forward(self, x):
-        if x.ndim==4:
-            x=x[:,None]
-        # if self.hparams.with_norm:
-        #   x=self.normalization(x)
-        feat_maps = self.backbone(x) 
-    
-        feat_maps_pooled = [torch.max(f, dim=2)[0]  for f in feat_maps]
-        feat_maps_pooled = [self.dropout(f).contiguous() for f in feat_maps_pooled]
+        if self.hparams.with_norm == True:
+            x=self.normalization(x)
+        feat_maps = self.backbone(x)
+        if self.hparams.dropout is not None:
+            feat_maps = [self.dropout(f).contiguous() for f in feat_maps]
+        if self.hparams.max==True:
+            feat_maps_pooled = [torch.max(f, dim=2)[0] for f in feat_maps]
+        else:
+            feat_maps_pooled = [torch.mean(f, dim=2) for f in feat_maps]
 
         pred_mask = self.decoder(feat_maps_pooled)
         return pred_mask
@@ -603,47 +636,27 @@ class RegressionPLModel(pl.LightningModule):
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
     
-    # def configure_optimizers(self):
-
-    #     optimizer = AdamW(self.parameters(), lr=CFG.lr)
-    #     scheduler =torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-4,pct_start=0.15, steps_per_epoch=self.hparams.total_steps, epochs=50,final_div_factor=1e2)
-    #     # scheduler = get_scheduler(CFG, optimizer)
-    #     return [optimizer],[scheduler]
     def configure_optimizers(self):
-
-        optimizer = AdamW(self.parameters(), lr=CFG.lr)
-        scheduler =torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=3e-4,pct_start=0.15, steps_per_epoch=143*4, epochs=25,final_div_factor=1e2)
-        # scheduler = get_scheduler(CFG, optimizer)
-        return [optimizer]#,[scheduler]
-    # def configure_optimizers(self):
-       
-    #     param_groups = [
-    #         {'params': self.backbone.parameters(), 'lr': 2e-5, 'weight_decay': 1e-2},
-    #         {'params': self.decoder.parameters(), 'lr': 1e-4, 'weight_decay': 1e-2},
-    #     ]
-        
-    #         # Conditionally add encoder_2d parameters if it exists
-    #     if hasattr(self, 'encoder_2d') and self.encoder_2d is not None:
-    #         param_groups.append({
-    #             'params': self.encoder_2d.parameters(),
-    #             'lr': 1e-5,  # smaller LR for pretrained encoder
-    #             'weight_decay': 0
-    #         })
+        based_lr = CFG.lr
+        param_groups = [
+            {'params': self.backbone.parameters(), 'lr': based_lr, 'weight_decay': 5e-3},
+            {'params': self.decoder.parameters(), 'lr': based_lr, 'weight_decay': 5e-3},
+        ]
+           
             
-            
-    #     optimizer = AdamW(param_groups)
-    #     # # Scheduler for OneCycleLR
-    #     # steps_per_epoch = 143 * 4  # adjust as per your dataloader
-    #     # scheduler = torch.optim.lr_scheduler.OneCycleLR(
-    #     #     optimizer,
-    #     #     max_lr=[group['lr'] for group in param_groups],  # pass per-group max_lr
-    #     #     pct_start=0.15,
-    #     #     steps_per_epoch=steps_per_epoch,
-    #     #     epochs=25,
-    #     #     final_div_factor=1e2
-    #     # )
+        optimizer = AdamW(param_groups)
+        # # Scheduler for OneCycleLR
+        # steps_per_epoch = 143 * 4  # adjust as per your dataloader
+        # scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        #     optimizer,
+        #     max_lr=[group['lr'] for group in param_groups],  # pass per-group max_lr
+        #     pct_start=0.95,
+        #     steps_per_epoch=143,
+        #     epochs=25,
+        #     final_div_factor=1e2
+        # )
 
-    #     return [optimizer]#, [{'scheduler': scheduler, 'interval': 'step'}]
+        return [optimizer]#, [{'scheduler': scheduler, 'interval': 'step'}]
 
     
 
@@ -654,88 +667,93 @@ torch.cuda.empty_cache()
 print(CFG.valid_id)
 fragment_id = CFG.valid_id
 
-valid_mask_gt = cv2.imread(CFG.comp_dataset_path + f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
-# valid_mask_gt = cv2.resize(valid_mask_gt, (valid_mask_gt.shape[1]//2, valid_mask_gt.shape[0]//2), interpolation=cv2.INTER_AREA)
-# pad0 = (CFG.size - valid_mask_gt.shape[0] % CFG.size)
-# pad1 = (CFG.size - valid_mask_gt.shape[1] % CFG.size)
-# valid_mask_gt = np.pad(valid_mask_gt, [(0, pad0), (0, pad1)], constant_values=0)
-valid_mask_gt = cv2.resize(
-    valid_mask_gt,
-    (int(valid_mask_gt.shape[1] / 2), int(valid_mask_gt.shape[0] / 2)),
-    interpolation=cv2.INTER_AREA
-)
+valid_mask_gt = 0
+tif_path = f"train_scrolls/{fragment_id}/layers/32.tif"
+if os.path.exists(tif_path):
+    valid_mask_gt = cv2.imread(f"train_scrolls/{fragment_id}/layers/32.tif", 0)
+
+else:
+    valid_mask_gt = cv2.imread(f"train_scrolls/{fragment_id}/layers/32.jpg", 0)
+            
+            
+# valid_mask_gt = cv2.imread(CFG.comp_dataset_path + f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
+valid_mask_gt = cv2.resize(valid_mask_gt, (valid_mask_gt.shape[1]//1, valid_mask_gt.shape[0]//1), interpolation=cv2.INTER_NEAREST)
+
 pred_shape=valid_mask_gt.shape
 torch.set_float32_matmul_precision('medium')
 
 fragments=[CFG.valid_id]
 print('Fragments: ', fragments) 
+for a in [0.6,0.5]:
+    for max in [True]:
+        for smooth in [0.25,0.15]:
+            # for size in [1,2]:
+                for f in [['20231210132040','frag5'],['20231210132040','frag1','frag5']]:
+                    norm = True
+                    
+                    # CFG.frags = f
+        
+                    enc_i,enc,fold=0,'i3d',0
+                    for fid in fragments:
+                        CFG.valid_id=fid
+                        fragment_id = CFG.valid_id
 
-for lr in [['20231210132040','frag1']]:
+                        pred_shape=valid_mask_gt.shape
 
-        # CFG.start_idx=lr
-        # CFG.frags = lr  
+                        train_images, train_masks, valid_images, valid_masks, valid_xyxys = get_train_valid_dataset()
+                        print(len(train_images))
 
-        enc_i,enc,fold=0,'i3d',0
-        for fid in fragments:
-            CFG.valid_id=fid
-            fragment_id = CFG.valid_id
-
-            pred_shape=valid_mask_gt.shape
-
-            train_images, train_masks, valid_images, valid_masks, valid_xyxys = get_train_valid_dataset()
-            print(len(train_images))
-
-            valid_xyxys = np.stack(valid_xyxys)
-            
-            train_dataset = CustomDataset(
-                train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG)
-            )
-            
-            valid_dataset = CustomDataset(
-                valid_images, CFG,xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG))
-            
-            train_loader = DataLoader(train_dataset,
-                                        batch_size=CFG.train_batch_size,
-                                        shuffle=True,
-                                        num_workers=CFG.num_workers, pin_memory=True, drop_last=True,
-                                        )
-            valid_loader = DataLoader(valid_dataset,
-                                        batch_size=CFG.valid_batch_size,
-                                        shuffle=False,
-                                        num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
-            
-            print('Trainloader lenth: ',len(train_loader))
+                        valid_xyxys = np.stack(valid_xyxys)
+                        
+                        train_dataset = CustomDataset(
+                            train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG)
+                        )
+                        
+                        valid_dataset = CustomDataset(
+                            valid_images, CFG,xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG))
+                        
+                        train_loader = DataLoader(train_dataset,
+                                                    batch_size=CFG.train_batch_size,
+                                                    shuffle=True,
+                                                    num_workers=CFG.num_workers, pin_memory=True, drop_last=True,
+                                                    )
+                        valid_loader = DataLoader(valid_dataset,
+                                                    batch_size=CFG.valid_batch_size,
+                                                    shuffle=False,
+                                                    num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
+                        
+                        print('Trainloader lenth: ',len(train_loader))
 
 
-            run_slug=f'RESNET_{CFG.frags}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}'
+                        run_slug=f'RESNET_{CFG.frags}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}_norm={norm}_a={a}_max={max}_smooth={smooth}'
 
-            wandb_logger = WandbLogger(project="vesivus",name=run_slug+f'{enc}')
-            norm=fold==1
-            model=RegressionPLModel(enc='resnet101',pred_shape=pred_shape,size=CFG.size,total_steps=len(train_loader))
-            
-            # # # # DION
-            # checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/f15_div2_l15-35_20231210132040_0_fr_i3depoch=11.ckpt", map_location="cpu", weights_only=False)
-            # model.load_state_dict(checkpoint["state_dict"], strict=True)
+                        wandb_logger = WandbLogger(project="vesivus",name=run_slug+f'{enc}')
+                        norm=fold==1
+                        model=RegressionPLModel(enc='resnet101',pred_shape=pred_shape,size=CFG.size,total_steps=len(train_loader), with_norm=norm, a = a,b = 1-a,max= max, smooth=smooth)
+                        
+                        # DION
+                        checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/f15_div2_l15-35_20231215151901_0_fr_i3depoch=7-v3.ckpt", map_location="cpu", weights_only=False)
+                        model.load_state_dict(checkpoint["state_dict"], strict=True)
 
-            # print('FOLD : ',fold)
-            wandb_logger.watch(model, log="all", log_freq=50)
-            # multiplicative = lambda epoch: 0.9
-            trainer = pl.Trainer(
-            max_epochs=50,
-            accelerator="gpu",
-            devices=-1,
-            check_val_every_n_epoch=4,
-            logger=wandb_logger,
-            default_root_dir="./models",
-            accumulate_grad_batches=1,
-            precision='16-mixed',
-            gradient_clip_val=1.0,
-            gradient_clip_algorithm="norm",
-            strategy='ddp_find_unused_parameters_true',
-            callbacks=[ModelCheckpoint(filename=f'f15_div2_l15-35_{fid}_{fold}_fr_{enc}'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
-                        ],
-            )
-            # trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
-            trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+                        # print('FOLD : ',fold)
+                        wandb_logger.watch(model, log="all", log_freq=50)
+                        trainer = pl.Trainer(
+                        max_epochs=30,
+                        accelerator="gpu",
+                        devices=-1,
+                        check_val_every_n_epoch=4,
+                        logger=wandb_logger,
+                        default_root_dir="./models",
+                        accumulate_grad_batches=1,
+                        precision='16-mixed',
+                        gradient_clip_val=1.0,
+                        gradient_clip_algorithm="norm",
+                        strategy='ddp_find_unused_parameters_true',
+                        callbacks=[ModelCheckpoint(filename=f'f15_div2_l15-35_{fid}_{fold}_fr_{enc}'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
+                                    ],
+                        )
+                        
+                        trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
+                        # trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
 
-            wandb.finish()
+                        wandb.finish()

@@ -1,7 +1,7 @@
 import glob
 import os
 import cv2
-from PIL import Image
+from PIL import Image, ImageOps
 import tifffile as tiff
 import numpy as np
 from scipy import ndimage
@@ -28,89 +28,88 @@ def read_image_mask(fragment_id, CFG=None):
     idxs = range(start_idx, end_idx)
     image_shape = 0
     
-    # if fragment_id.startswith("frag5"):
-    #     print("Fraggggggggggggggggggggggggggggggggggggggggggggggggggggggggg")
-    #     idxs = range(19, 19 + CFG.in_chans)
-    # if fragment_id.startswith("frag1"):
-    #     print("Fraggggggggggggggggggggggggggggggggggggggggggggggggggggggggg")
-    #     idxs = range(28, 28 + CFG.in_chans)
+    if fragment_id==CFG.valid_id:
+        print('valid')
+        start_idx = int(start_idx+(CFG.in_chans-CFG.valid_chans)//2)
+        end_idx = start_idx + CFG.valid_chans
+        idxs = range(start_idx, end_idx)
+        print(start_idx)
         
-        
-    # if fragment_id.startswith("202"):
-    #     idxs = range(15, 45)
-    # idxs = range(15, 46, 2)
+    
+    
+    try:
 
-        
+        for i in tqdm(idxs):
+            tif_path = os.path.join(CFG.segment_path, fragment_id, "layers", f"{i:02}.tif")
+            jpg_path = os.path.join(CFG.segment_path, fragment_id, "layers", f"{i:02}.jpg")
+            png_path = os.path.join(CFG.segment_path, fragment_id, "layers", f"{i:02}.png") 
+            
+            if os.path.exists(tif_path):
+                image = cv2.imread(tif_path, 0)
+            elif os.path.exists(jpg_path):
+                image = cv2.imread(jpg_path, 0)
+            else:
+                image = cv2.imread(png_path, 0)
+            image_shape = image.shape
 
+            pad0 = (CFG.tile_size - image.shape[0] % CFG.tile_size) % CFG.tile_size
+            pad1 = (CFG.tile_size - image.shape[1] % CFG.tile_size) % CFG.tile_size
+            image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0) 
+            
+            # Resize the image to match the expected size
+            if (any(sub in fragment_id for sub in CFG.frags_ratio1)):
+                scale = 1 / CFG.ratio1
+                new_w = int(image.shape[1] * scale) 
+                new_h = int(image.shape[0] * scale) 
+                image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            elif (any(sub in fragment_id for sub in CFG.frags_ratio2)):
+                scale = 1 / CFG.ratio2
+                new_w = int(image.shape[1] * scale)
+                new_h = int(image.shape[0] * scale)
+                image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            else:
+                scale = 1 / 1
+                new_w = int(image.shape[1] * scale)
+                new_h = int(image.shape[0] * scale)
+                image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                
+            image=np.clip(image,0,200)
+            images.append(image)
 
-    for i in tqdm(idxs):
-        tif_path = os.path.join(CFG.segment_path, fragment_id, "layers", f"{i:02}.tif")
-        jpg_path = os.path.join(CFG.segment_path, fragment_id, "layers", f"{i:02}.jpg")
-        png_path = os.path.join(CFG.segment_path, fragment_id, "layers", f"{i:02}.png") 
+        images = np.stack(images, axis=2)
+        print(f" Shape of {fragment_id} segment: {images.shape}")
+        # if fragment_id == '20231024093300':
+        #     images=images[:,:,::-1]
         
-        if os.path.exists(tif_path):
-            image = cv2.imread(tif_path, 0)
-        elif os.path.exists(jpg_path):
-            image = cv2.imread(jpg_path, 0)
+        mask = np.zeros(images.shape[:2], dtype=np.uint8)  # shape = (H, W)
+        fragment_mask = np.zeros(images.shape[:2], dtype=np.uint8)  # shape = (H, W)
+        # # READ INK LABELS
+        inklabel_files = glob.glob(f"{CFG.segment_path}/{fragment_id}/*inklabels.*")
+        if len(inklabel_files) > 0:
+            mask = cv2.imread(inklabel_files[0], 0)
         else:
-            image = cv2.imread(png_path, 0)
-        image_shape = image.shape
-
-        pad0 = (CFG.tile_size - image.shape[0] % CFG.tile_size) % CFG.tile_size
-        pad1 = (CFG.tile_size - image.shape[1] % CFG.tile_size) % CFG.tile_size
-        image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0) 
+            print(f"Creating empty mask for {fragment_id}")
+            mask = np.zeros(images[0].shape)
         
-        # Resize the image to match the expected size
-        if (any(sub in fragment_id for sub in CFG.frags_ratio1)):
-            scale = 1 / CFG.ratio1
-            new_w = int(image.shape[1] * scale) 
-            new_h = int(image.shape[0] * scale) 
-            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        elif (any(sub in fragment_id for sub in CFG.frags_ratio2)):
-            scale = 1 / CFG.ratio2
-            new_w = int(image.shape[1] * scale)
-            new_h = int(image.shape[0] * scale)
-            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
-        # image=np.clip(image,20,200)
-        images.append(image)
+        if image_shape!=mask.shape[0]:
+            mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
+        mask = mask.astype('float32')
+        mask/=255
         
+        mask = cv2.resize(mask, (images.shape[1], images.shape[0]), interpolation=cv2.INTER_AREA)
     
-    # from scipy.ndimage import zoom
+        # fragment_mask=cv2.imread(f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
+        path = f"{CFG.segment_path}{fragment_id}/{fragment_id}_mask.png"
+        fragment_mask = cv2.imread(path,0)
 
-    images = np.stack(images, axis=2)
-    print(f" Shape of {fragment_id} segment: {images.shape}")
-    
-    # if fragment_id.startswith("202"):
-    #     # images shape: (H, W, 30)
-    #     scale = (1, 1, 15/30)   # keep H, W the same; shrink axis=2 by 0.5
-    #     images = zoom(images, scale, order=1)  # order=1 → bilinear interpolation
+        if image_shape!=fragment_mask.shape[0]:
+            fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
+            
 
-   
-    # # READ INK LABELS
-    inklabel_files = glob.glob(f"{CFG.segment_path}/{fragment_id}/*inklabels.*")
-    if len(inklabel_files) > 0:
-        mask = cv2.imread(inklabel_files[0], 0)
-    else:
-        print(f"Creating empty mask for {fragment_id}")
-        mask = np.zeros(images[0].shape)
-    # print(mask.shape)
-    if image_shape!=mask.shape[0]:
-        mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
-    
-    # fragment_mask=cv2.imread(f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
-    path = f"{CFG.segment_path}{fragment_id}/{fragment_id}_mask.png"
-    fragment_mask = cv2.imread(path,0)
-
-    if image_shape!=fragment_mask.shape[0]:
-        fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
-        
-    mask = mask.astype('float32')
-    mask/=255
-    
-    mask = cv2.resize(mask, (images.shape[1], images.shape[0]), interpolation=cv2.INTER_AREA)
-    fragment_mask = cv2.resize(fragment_mask, (images.shape[1], images.shape[0]), interpolation=cv2.INTER_AREA)
-
+        fragment_mask = cv2.resize(fragment_mask, (images.shape[1], images.shape[0]), interpolation=cv2.INTER_AREA)
+            
+    except:
+            print(fragment_id,"no used")
     return images, mask, fragment_mask
 
 def get_train_valid_dataset(CFG=None):
@@ -142,7 +141,7 @@ def get_train_valid_dataset(CFG=None):
             for b in x1_list:
                 if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size] == 0):
                     
-                    # if fragment_id =='s4212':
+                    # if fragment_id =='s4':
                     #     # if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.95):
                     #         for yi in range(0, CFG.tile_size, CFG.size):
                     #             for xi in range(0, CFG.tile_size, CFG.size):
@@ -151,56 +150,56 @@ def get_train_valid_dataset(CFG=None):
                     #                 y2 = y1 + CFG.size
                     #                 x2 = x1 + CFG.size
                     #                 tile_mask = mask[y1:y2, x1:x2, None].copy()  # copy the patch
-                    #                 all_gray = np.all((tile_mask > 0.01) & (tile_mask < 0.99))
+                    #                 all_gray = np.all((tile_mask < 0.95))
                     #                 if not all_gray:
                     #                     # Set all pixels where mask==0 to IGNORE INDEX, keep 1s as is
-                    #                     tile_mask[(tile_mask <1) & (tile_mask>0.01)] = 127 # mask
+                    #                     tile_mask[(tile_mask <0.9) & (tile_mask>0.1)] = 127 # mask
                     #                     train_images.append(image[y1:y2, x1:x2])
                     #                     train_masks.append(tile_mask)
                     #                     windows_dict[(y1, y2, x1, x2)] = '1'
                     #                     assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
-                    if fragment_id == 's4121124252':
-                        print("kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk")
-                        for yi in range(0, CFG.tile_size, CFG.size):
-                            for xi in range(0, CFG.tile_size, CFG.size):
-                                y1 = a + yi
-                                x1 = b + xi
-                                y2 = y1 + CFG.size
-                                x2 = x1 + CFG.size
+                    # if fragment_id == 's4121124252':
+                    #     print("kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk")
+                    #     for yi in range(0, CFG.tile_size, CFG.size):
+                    #         for xi in range(0, CFG.tile_size, CFG.size):
+                    #             y1 = a + yi
+                    #             x1 = b + xi
+                    #             y2 = y1 + CFG.size
+                    #             x2 = x1 + CFG.size
 
-                                tile_mask = mask[y1:y2, x1:x2, None].copy()  # copy the patch
+                    #             tile_mask = mask[y1:y2, x1:x2, None].copy()  # copy the patch
 
-                                # ✅ Check if tile is all 1s or all 0s
-                                all_ones = np.all(tile_mask == 1)
-                                all_zeros = np.all(tile_mask == 0)
+                    #             # ✅ Check if tile is all 1s or all 0s
+                    #             all_ones = np.all(tile_mask == 1)
+                    #             all_zeros = np.all(tile_mask == 0)
 
-                                if all_ones or all_zeros:
+                    #             if all_ones or all_zeros:
 
-                                    train_images.append(image[y1:y2, x1:x2])
-                                    train_masks.append(tile_mask)
-                                    windows_dict[(y1, y2, x1, x2)] = '1'
+                    #                 train_images.append(image[y1:y2, x1:x2])
+                    #                 train_masks.append(tile_mask)
+                    #                 windows_dict[(y1, y2, x1, x2)] = '1'
 
-                                    assert image[y1:y2, x1:x2].shape == (CFG.size, CFG.size, CFG.in_chans)
+                    #                 assert image[y1:y2, x1:x2].shape == (CFG.size, CFG.size, CFG.in_chans)
                                     
-
-                    elif fragment_id == CFG.valid_id or not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size] < 0.05):
+                    if fragment_id == CFG.valid_id or not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size] < 0.05):
                         for yi in range(0, CFG.tile_size, CFG.size):
                             for xi in range(0, CFG.tile_size, CFG.size):
                                 y1 = a + yi
                                 x1 = b + xi
                                 y2 = y1 + CFG.size
                                 x2 = x1 + CFG.size
-                                if fragment_id != CFG.valid_id:
-                                    train_images.append(image[y1:y2, x1:x2])
-                                    train_masks.append(mask[y1:y2, x1:x2, None])
-                                    assert image[y1:y2, x1:x2].shape == (CFG.size, CFG.size, CFG.in_chans)
-                                    windows_dict[(y1, y2, x1, x2)] = '1'
+                                if fragment_id != CFG.valid_id :
+                                    if (y1, y2, x1, x2) not in windows_dict:
+                                        train_images.append(image[y1:y2, x1:x2])
+                                        train_masks.append(mask[y1:y2, x1:x2, None])
+                                        assert image[y1:y2, x1:x2].shape == (CFG.size, CFG.size, CFG.in_chans)
+                                        windows_dict[(y1, y2, x1, x2)] = '1'
                                 else:
                                     if (y1, y2, x1, x2) not in windows_dict:
                                         valid_images.append(image[y1:y2, x1:x2])
                                         valid_masks.append(mask[y1:y2, x1:x2, None])
                                         valid_xyxys.append([x1, y1, x2, y2])
-                                        assert image[y1:y2, x1:x2].shape == (CFG.size, CFG.size, CFG.in_chans)
+                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.valid_chans)
                                         windows_dict[(y1, y2, x1, x2)] = '1'
 
     return train_images, train_masks, valid_images, valid_masks, valid_xyxys

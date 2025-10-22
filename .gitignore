@@ -24,6 +24,7 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+*.npy
 MANIFEST
 
 # PyInstaller
@@ -262,3 +263,8 @@ outputs/
 vesivus/
 checkpoints/
 train_scrolls/
+pseudo/
+pseudo_/
+pseudo_1/
+lightning_logs/
+pretraining_scrolls/

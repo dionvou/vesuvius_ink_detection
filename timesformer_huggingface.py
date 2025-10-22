@@ -56,7 +56,7 @@ class CFG:
     size = 224
     tile_size = 224
     stride = tile_size // 8
-    train_batch_size = 15
+    train_batch_size = 7
     valid_batch_size = train_batch_size
 
     scheduler = 'GradualWarmupSchedulerV2'
@@ -94,10 +94,10 @@ class CFG:
                 ], p=0.4),
         A.CoarseDropout(max_holes=2, max_width=int(size * 0.2), max_height=int(size * 0.2), 
                         mask_fill_value=0, p=0.5),
-        A.Normalize(
-            mean= [0] * in_chans,
-            std= [1] * in_chans
-        ),
+        # A.Normalize(
+        #     mean= [0] * in_chans,
+        #     std= [1] * in_chans
+        # ),
         # A.Normalize(mean=[0.449]* in_chans, 
         #             std=[0.226]*in_chans), 
 
@@ -106,10 +106,10 @@ class CFG:
 
     valid_aug_list = [
         # A.Resize(size, size),
-        A.Normalize(
-            mean= [0] * in_chans,
-            std= [1] * in_chans
-        ),
+        # A.Normalize(
+        #     mean= [0] * in_chans,
+        #     std= [1] * in_chans
+        # ),
         # A.Normalize(mean=[0.449]* in_chans, 
         #             std=[0.226]*in_chans), 
         ToTensorV2(transpose_mask=True),
@@ -145,7 +145,7 @@ def cfg_init(cfg, mode='train'):
 cfg_init(CFG)
 
 
-def read_image_mask(fragment_id,start_idx=24,end_idx=24+CFG.in_chans, CFG=CFG): #17,43
+def read_image_mask(fragment_id,start_idx=22,end_idx=22+CFG.in_chans, CFG=CFG): #17,43
     fragment_id_ = fragment_id.split("_")[0]
     images = []
     idxs = range(start_idx, end_idx)
@@ -243,7 +243,7 @@ def worker_function(fragment_id, CFG):
     return train_images, train_masks, valid_images, valid_masks, valid_xyxys
 
 
-def get_train_valid_dataset(fragment_ids=['20231210132040','frag5']):
+def get_train_valid_dataset(fragment_ids=['20231210132040','frag5','frag1']):
     threads = []
     results = [None] * len(fragment_ids)
     
@@ -302,27 +302,27 @@ class CustomDataset(Dataset):
         self.pil_transform  = CFG.pil_transform
     def __len__(self):
         return len(self.images)
-    # def fourth_augment(self,image):
-    #     image_tmp = np.zeros_like(image)
-    #     cropping_num = random.randint(12, 16)
+    def fourth_augment(self,image):
+        image_tmp = np.zeros_like(image)
+        cropping_num = random.randint(14, 16)
 
-    #     start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
-    #     crop_indices = np.arange(start_idx, start_idx + cropping_num)
+        start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
+        crop_indices = np.arange(start_idx, start_idx + cropping_num)
 
-    #     start_paste_idx = random.randint(0, self.cfg.in_chans - cropping_num)
+        start_paste_idx = random.randint(0, self.cfg.in_chans - cropping_num)
 
-    #     tmp = np.arange(start_paste_idx, cropping_num)
-    #     np.random.shuffle(tmp)
+        tmp = np.arange(start_paste_idx, cropping_num)
+        np.random.shuffle(tmp)
 
-    #     cutout_idx = random.randint(0, 2)
-    #     temporal_random_cutout_idx = tmp[:cutout_idx]
+        cutout_idx = random.randint(0, 2)
+        temporal_random_cutout_idx = tmp[:cutout_idx]
 
-    #     image_tmp[..., start_paste_idx : start_paste_idx + cropping_num] = image[..., crop_indices]
+        image_tmp[..., start_paste_idx : start_paste_idx + cropping_num] = image[..., crop_indices]
 
-    #     # if random.random() > 0.4:
-    #     #     image_tmp[..., temporal_random_cutout_idx] = 0
-    #     image = image_tmp
-    #     return image
+        # if random.random() > 0.4:
+        #     image_tmp[..., temporal_random_cutout_idx] = 0
+        image = image_tmp
+        return image
 
     def __getitem__(self, idx):
         if self.xyxys is not None: #VALID
@@ -358,7 +358,7 @@ class CustomDataset(Dataset):
             # image=image.transpose(0,2,1)#(c,w,h)
             # image=image.transpose(2,1,0)#(h,w,c)
 
-            # image=self.fourth_augment(image)
+            image=self.fourth_augment(image)
             # print(image.shape)
             if self.transform:
                 data = self.transform(image=image, mask=label)
@@ -477,9 +477,9 @@ class RegressionPLModel(pl.LightningModule):
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.15)
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
-        self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
+        self.loss_func= lambda x,y: 0.6* self.loss_func1(x,y)+0.4*self.loss_func2(x,y)
     
         self.backbone = TimesformerModel.from_pretrained("facebook/timesformer-hr-finetuned-k600")
         # self.decoder_for_cls = CLSBasedDecoder(cls_dim=768, embed_dim=768, spatial_size=14, num_layers=3, num_heads=8)
@@ -590,7 +590,7 @@ class RegressionPLModel(pl.LightningModule):
         # Define parameter groups
         param_groups = [
             {'params': other_params, 'lr': self.hparams.lr},
-            {'params': head_params, 'lr': self.hparams.lr*10 },  # 10x LR for the head
+            {'params': head_params, 'lr': self.hparams.lr },  # 10x LR for the head
         ]
 
         optimizer = AdamW(param_groups)

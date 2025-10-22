@@ -18,7 +18,7 @@ import segmentation_models_pytorch as smp
 from torch.optim import AdamW
 from warmup_scheduler import GradualWarmupScheduler
 import albumentations as A
-from transformers import VideoMAEFeatureExtractor, VideoMAEForVideoClassification
+from transformers import VideoMAEFeatureExtractor, VideoMAEForVideoClassification, AutoModel
 
 
 import utils
@@ -31,7 +31,7 @@ from transformers import TimesformerModel, TimesformerConfig
 # Convert to PIL and then to 3 channels
 pil_transform = T.Compose([
     T.ToPILImage(),                    # convert (C, H, W) to PIL
-    T.Grayscale(num_output_channels=3),  # convert to 3 channels
+    T.Grayscale(num_output_channels=1),  # convert to 3 channels
 ])
 
 class TimesformerDataset(Dataset):
@@ -43,11 +43,11 @@ class TimesformerDataset(Dataset):
         self.rotate = A.Compose([A.Rotate(8,p=1)])
         self.transform = transform
         self.xyxys=xyxys
-        
         self.video_transform = T.Compose([
-            T.ConvertImageDtype(torch.float32), 
-            # T.Normalize(mean=[0.45, 0.45, 0.45], std=[0.225, 0.225, 0.225])
-            ])
+            T.ConvertImageDtype(torch.float32),
+            T.Normalize(mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225]),
+        ])
         
 
         self.pil_transform  = pil_transform
@@ -55,26 +55,35 @@ class TimesformerDataset(Dataset):
     def __len__(self):
         return len(self.images)
     
-    def fourth_augment(self,image, in_chans=16):
-        image_tmp = np.zeros_like(image)
-        cropping_num = random.randint(in_chans-2, in_chans)
+    def fourth_augment(self, image):
+        """
+        Custom channel augmentation that returns exactly 24 channels.
+        """
+        # always select 8
+        cropping_num =  self.cfg.valid_chans 
 
+        # pick crop indices
         start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
         crop_indices = np.arange(start_idx, start_idx + cropping_num)
 
+        # pick where to paste them
         start_paste_idx = random.randint(0, self.cfg.in_chans - cropping_num)
 
-        tmp = np.arange(start_paste_idx, cropping_num)
-        np.random.shuffle(tmp)
+        # container
+        image_tmp = np.zeros_like(image)
 
+        # paste cropped channels
+        image_tmp[..., start_paste_idx:start_paste_idx + cropping_num] = image[..., crop_indices]
+
+        # optional random cutout
         cutout_idx = random.randint(0, 1)
-        temporal_random_cutout_idx = tmp[:cutout_idx]
-
-        image_tmp[..., start_paste_idx : start_paste_idx + cropping_num] = image[..., crop_indices]
-
+        temporal_random_cutout_idx = np.arange(start_paste_idx, start_paste_idx + cutout_idx)
         if random.random() > 0.4:
             image_tmp[..., temporal_random_cutout_idx] = 0
-        image = image_tmp
+
+        # finally, keep only 24 channels
+        image = image_tmp[..., start_paste_idx:start_paste_idx + cropping_num]
+
         return image
     def z_circular_shift_np(self, volume, max_shift=2, prob=0.5, cutout_size=1, cutout_prob=0.1):
         """
@@ -167,9 +176,7 @@ class TimesformerDataset(Dataset):
             # image=image.transpose(0,2,1)#(c,w,h)
             # image=image.transpose(2,1,0)#(h,w,c)
 
-            image=self.fourth_augment(image, self.cfg.in_chans)
-            # image = self.shuffle_d_axis(image)
-            # image = self.z_circular_shift_np(image)
+            image=self.fourth_augment(image)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)
@@ -179,6 +186,7 @@ class TimesformerDataset(Dataset):
                 
             image = image.permute(1,0,2,3)
             image = image.repeat(1, 3, 1, 1)
+
             image = torch.stack([self.video_transform(f) for f in image]) # list of frames
             return image, label
     
@@ -191,46 +199,21 @@ class TimesfomerModel(pl.LightningModule):
         self.mask_count = np.zeros(self.hparams.pred_shape)
         self.IGNORE_INDEX = 127
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.15,ignore_index=self.IGNORE_INDEX)
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
-        self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
+        self.loss_func= lambda x,y: 0.7 * self.loss_func1(x,y)+0.3*self.loss_func2(x,y)
         
-        # self.backbone = VideoMAEFeatureExtractor.from_pretrained("MCG-NJU/videomae-base-finetuned-kinetics")
+        # hf_repo = "facebook/vjepa2-vitl-fpc64-256"
 
-        self.backbone = TimesformerModel.from_pretrained("facebook/timesformer-hr-finetuned-ssv2")
-        # config = TimesformerConfig(
-        #     num_frames=4,
-        #     image_size=224,
-        #     patch_size=16,
-        #     num_channels=3,
-        #     attention_type="divided_space_time",
-        #     num_layers=8,
-        #     num_heads=8,
-        # )
-        # self.backbone = TimesformerModel.
-        # from transformers import TimesformerConfig, TimesformerModel
+        # backbone = AutoModel.from_pretrained(hf_repo)
+        
+        backbone = TimesformerModel.from_pretrained("facebook/timesformer-base-finetuned-k600")
 
-        # config = TimesformerConfig(
-        #     num_frames=8,
-        #     image_size=128,
-        #     patch_size=8,
-        #     num_channels=1,
-        #     attention_type="divided_space_time",
-        #     # num_hidden_layers=8,   # ✅ correct field name
-        #     # num_attention_heads=8, # ✅ correct field name
-        #     # hidden_size=256        # shrink embedding dim too
-        # )
-
-        # model = TimesformerModel(config)
-
-        # self.backbone = TimesformerModel(config)
-        # print(self.backbone)
+        self.encoder = backbone
 
         self.classifier = nn.Sequential(
             nn.Linear(768, (self.hparams.size//16)**2),  
         )
-                
-
         # self.classifier = nn.Sequential(
         #     nn.Linear(768, 1),  
         # )
@@ -275,7 +258,7 @@ class TimesfomerModel(pl.LightningModule):
     #     # seg_logits = self.decoder(feat_2d)  # (B, num_classes, 224, 224)
     #     return seg_logits.permute(0,3,1,2)
     def forward(self, x):
-        outputs = self.backbone(x, output_hidden_states=True)
+        outputs = self.encoder(x, output_hidden_states=True)
         last_hidden_state = outputs.last_hidden_state  # tuple of all hidden layers
         cls = last_hidden_state[:,0,:]
         preds = self.classifier(cls)
@@ -285,81 +268,84 @@ class TimesfomerModel(pl.LightningModule):
     
 # # GOOOOOOOOOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
 # class Patch3DTransformerSegmentation(nn.Module):
-#     def __init__(self, num_classes=1, embed_dim=768, num_heads=4, depth=2, patch_output=4):
+#     def __init__(self, num_classes=1, embed_dim=768, num_heads=8, depth=2, patch_output=4):
 #         super().__init__()
 #         self.patch_output = patch_output
 #         self.num_classes = num_classes
 
-#         # Swin3D backbone
-#         self.backbone = TimesformerModel.from_pretrained("facebook/timesformer-base-finetuned-ssv2")
-#         # backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1') #KINETICS400_IMAGENET22K_V1
-#         # self.backbone = nn.Sequential(*list(backbone.children())[:-2])  # remove global pool + head
+                
+#         config = TimesformerConfig(
+#             num_frames=16,
+#             image_size=64,
+#             patch_size=16,
+#             num_channels=1,
+#             attention_type="divided_space_time",
+#             hidden_size=768,           # embedding dimension
+#             num_attention_heads=8,
+#             intermediate_size=768,
+#             num_hidden_layers=6        # <--- THIS is the depth (# of transformer blocks)
+#         )
+#         backbone = TimesformerModel(config)
         
-#         self.input_proj = nn.Linear(embed_dim, self.patch_output**2)
-#         # Transformer encoder
+#         checkpoint = torch.load("pretraining/checkpoints/64_tf_16_fs_epoch=31.ckpt", map_location="cpu",weights_only=False)
+#         state_dict = checkpoint["state_dict"]
+#         # filter only encoder weights and strip prefixes
+#         # keep only encoder weights and remove only the first 'encoder.' prefix
+#         encoder_state_dict = {}
+#         for k, v in state_dict.items():
+#             if k.startswith("encoder."):
+#                 new_key = k[len("encoder."): ]  # remove only the first 'encoder.'
+#                 encoder_state_dict[new_key] = v
+
+#         missing, unexpected = backbone.load_state_dict(encoder_state_dict, strict=False)
+
+#         print("Missing keys:", missing)
+#         print("Unexpected keys:", unexpected)
+
+
+#         self.encoder = backbone
+        
 #         encoder_layer = nn.TransformerEncoderLayer(
-#             d_model=self.patch_output**2,
+#             d_model=embed_dim,
 #             nhead=num_heads,
-#             dim_feedforward=self.patch_output**2,
+#             dim_feedforward=embed_dim,
 #             dropout=0.1,
-#             activation='relu'
+#             activation="gelu",
+#             batch_first=True  # (B, N, C)
 #         )
 #         self.embed_dim = embed_dim
-#         # self.pos_embedding = None  # will be initialized dynamically after seeing Hf, Wf
-#         self.pos_embedding_x = None
 #         self.decoder = nn.TransformerEncoder(encoder_layer, num_layers=depth)
 
 #         # Classifier: per patch -> small 3D patch
 #         self.classifier = nn.Linear(embed_dim, patch_output ** 2)
-#         # self.proj = nn.Conv2d(embed_dim, 256, kernel_size=3, padding=1)  # learns spatial filters
-#         # self.head = nn.Sequential(
-#         #     nn.Conv2d(embed_dim, 256, kernel_size=3, padding=1),
-#         #     nn.ReLU(),
-#         #     nn.Conv2d(256,self.patch_output**2, kernel_size=1)  # final projection
-#         # )
-#         # self.conv = nn.Conv2d(48, 1, kernel_size=1)
-
 
 #     def forward(self, x):
-#         B, C, T, H, W = x.shape
-#         x = x.permute(0,2,1,3,4)
-#         # feats = self.backbone(x, )  # (B, T', H', W',embed_dim)
-#         outputs = self.backbone(x, output_hidden_states=True)
+#         B, T, C, H, W = x.shape
+#         outputs = self.encoder(x, output_hidden_states=True)
 #         feats = outputs.last_hidden_state[:,1:,:]  # tuple of all hidden layers
-#         # feats = last_hidden_state[:,0,:]
-#         # print(feats.shape)
-#         feats = feats.view(B,T,14,14,-1)
-#         # print(feats.shape)
-#         # Adaptive temporal pooling
-#         feats = feats.max(dim=1)[0] # (B, 1, Hf, Wf, embed_dim,)
         
+        
+#         feats = feats.view(B,T,8,8,-1)
+#         # print(feats.shape)
+#         feats = feats.mean(dim=1) # (B, 1, Hf, Wf, embed_dim,)
+#         # print(feats.shape)
 #         B, Hf, Wf, D = feats.shape
 
 #         # # Move embed_dim to dim 1 and flatten patches
-#         patch_tokens = feats.permute(0, 3, 1, 2).contiguous()  # (B, 768, 8, 7, 7)
-#         patch_tokens = patch_tokens.view(B, Hf*Wf, -1)        # (B, 768, 8*7*7=392)
-#         patch_tokens = self.input_proj(patch_tokens)
+#         # patch_tokens = feats.permute(0, 3, 1, 2).contiguous()  # (B, 768, 8, 7, 7)
+#         patch_tokens = feats.view(B, Hf*Wf, -1)      # (B, 768, 8*7*7=392)
+#         # print(patch_tokens.shape)
         
 #         # Transformer
 #         transformed_tokens = self.decoder(patch_tokens) 
-#         transformed_tokens = transformed_tokens.permute(0, 2, 1).view(B, self.patch_output**2, Hf, Wf)  # (B, C, Hf, Wf)
+#         transformed_tokens = transformed_tokens.permute(0, 2, 1).view(B, self.embed_dim, Hf, Wf)  # (B, C, Hf, Wf)
 
-#         # if self.pos_embedding_x is None:
-#         #     self.pos_embedding_x = nn.Parameter(torch.zeros(1,  self.embed_dim,  Hf, Wf, device=x.device))
-#         #     nn.init.trunc_normal_(self.pos_embedding_x, std=0.02)
-            
-#         # transformed_tokens = transformed_tokens + self.pos_embedding_x  # (B, C, Hf, Wf)
 #         # print(transformed_tsokens.shape)
-#         # transformed_tokens = transformed_tokens.permute(0, 2, 3, 1).contiguous().view(B, Hf*Wf, -1)  # (B, N, C)
-#         # logits = self.classifier(transformed_tokens)
-#         # logits = logits.permute(0, 2, 1).view(B, self.patch_output**2, Hf, Wf)  # (B, patch_output^2, Hf, Wf)
-        
-#         # logits = self.head(transformed_tokens)   # (B, num_classes, Hf, Wf)
-#         logits = F.pixel_shuffle(transformed_tokens, upscale_factor=8) 
-#         # print(logits.shape)
-#         # print(logits.shape)
+#         transformed_tokens = transformed_tokens.permute(0, 2, 3, 1).contiguous().view(B, Hf*Wf, -1)  # (B, N, C)
+#         logits = self.classifier(transformed_tokens)
+#         logits = logits.view(B, 1, 8 ,8)  # (B, patch_output^2, Hf, Wf)
 #         return logits
-    
+
 
 # class TimesfomerModel(pl.LightningModule):
 #     def __init__(self, pred_shape, size, lr, scheduler=None,wandb_logger=None, with_norm=False):
@@ -372,13 +358,12 @@ class TimesfomerModel(pl.LightningModule):
 
 #         self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
 #         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
-#         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
+#         self.loss_func= lambda x,y: 0.6 * self.loss_func1(x,y)+0.4*self.loss_func2(x,y)
         
-#         self.backbone = Patch3DTransformerSegmentation(num_classes=1, patch_output=8)
+#         self.backbone = Patch3DTransformerSegmentation(num_classes=1, patch_output=1)
     
 #     def forward(self, x):
 
-#         x = x.permute(0,2,1,3,4)
 #         output = self.backbone(x)  # runs backbone, sets self.feature
 #         return output
    
@@ -409,19 +394,19 @@ class TimesfomerModel(pl.LightningModule):
         return {"loss": loss1}
     
     def configure_optimizers(self):
-        # Separate the head parameters
-        head_params = list(self.classifier.parameters())
-        other_params = [p for n, p in self.backbone.named_parameters() if "classifier" not in n]
+        # # Separate the head parameters
+        # head_params = list(self.classifier.parameters())
+        # other_params = [p for n, p in self.named_parameters() if "classifier" not in n]
         
-        assert len(head_params) > 0, "No parameters found for 'head_params' group"
-        assert len(other_params) > 0, "No parameters found for 'other_params' group"
+        # assert len(head_params) > 0, "No parameters found for 'head_params' group"
+        # assert len(other_params) > 0, "No parameters found for 'other_params' group"
 
-        param_groups = [
-            {'params': other_params, 'lr': self.hparams.lr},
-            {'params': head_params, 'lr': self.hparams.lr*10},  # 10x LR for the head
-        ]
+        # param_groups = [
+        #     {'params': other_params, 'lr': self.hparams.lr},
+        #     {'params': head_params, 'lr': self.hparams.lr},  # 10x LR for the head
+        # ]
 
-        optimizer = AdamW(param_groups)
+        optimizer = AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=0.01)
     
         scheduler = get_scheduler(optimizer,scheduler=self.hparams.scheduler)
         return [optimizer], [scheduler]
@@ -431,11 +416,11 @@ class TimesfomerModel(pl.LightningModule):
     #     base_lr = self.hparams.lr
 
     #     # 1️⃣ Backbone parameters in their own group
-    #     backbone_params = list(self.backbone.backbone.parameters())
+    #     backbone_params = list(self.encoder.encoder.parameters())
 
     #     # 2️⃣ Everything else (decoder, head, etc.)
     #     other_params = [
-    #         p for n, p in self.backbone.named_parameters()
+    #         p for n, p in self.encoder.named_parameters()
     #         if p.requires_grad and not any(k in n for k in ["backbone"])
     #     ]
 
@@ -443,7 +428,7 @@ class TimesfomerModel(pl.LightningModule):
     #     assert len(other_params) > 0, "No parameters found for 'other_params' group"
     #     assert len(backbone_params) > 0, "No parameters found for 'backbone_params' group"
         
-    #     total_params = sum(p.numel() for p in self.backbone.parameters() if p.requires_grad)
+    #     total_params = sum(p.numel() for p in self.encoder.parameters() if p.requires_grad)
     #     backbone_count = sum(p.numel() for p in backbone_params)
     #     other_count = sum(p.numel() for p in other_params)
 

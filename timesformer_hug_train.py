@@ -53,15 +53,16 @@ class CFG:
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 20
-    in_chans = 16
+    start_idx = 26
+    in_chans = 10
+    valid_chans = 8
     
     size = 224
     tile_size = 224
     stride = tile_size // 8
     
-    train_batch_size =  12# 32
-    valid_batch_size = 25
+    train_batch_size =  5# 32
+    valid_batch_size = 15
     check_val = 4
     lr = 2e-5
     
@@ -73,8 +74,8 @@ class CFG:
     ratio2 = 2
     
     # ============== fold =============
-    segments = ['frag5','frag1','20231210132040'] 
-    valid_id = '20231210132040'
+    segments = ['20231215151901','frag5'] 
+    valid_id = '20231215151901'
     # segments = ['rect1','remaining1'] 
     # valid_id = 'rect1'#20231210132040'20231215151901
     
@@ -176,7 +177,7 @@ wandb_logger = WandbLogger(project="vesivus",name=run_slug)
 model = timesformer_hug.TimesfomerModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger)
 wandb_logger.watch(model, log="all", log_freq=100)
 
-model = timesformer_hug.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['frag5', 'frag1', '20231215151901']_valid=20231215151901_size=224_lr=2e-05_in_chans=16_epoch=7.ckpt")
+# model = timesformer_hug.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['frag5', 'frag1', '20231215151901']_valid=20231215151901_size=224_lr=2e-05_in_chans=16_epoch=7.ckpt")
 trainer = pl.Trainer(
     max_epochs=CFG.epochs,
     accelerator="gpu",
@@ -193,6 +194,6 @@ trainer = pl.Trainer(
     ]
 
 )
-trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
-# trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+# trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
+trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
 wandb.finish()
