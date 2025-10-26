@@ -36,7 +36,6 @@ def read_image_mask(fragment_id, CFG=None):
         print(start_idx)
         
     
-    
     try:
 
         for i in tqdm(idxs):
@@ -50,11 +49,6 @@ def read_image_mask(fragment_id, CFG=None):
                 image = cv2.imread(jpg_path, 0)
             else:
                 image = cv2.imread(png_path, 0)
-            image_shape = image.shape
-
-            pad0 = (CFG.tile_size - image.shape[0] % CFG.tile_size) % CFG.tile_size
-            pad1 = (CFG.tile_size - image.shape[1] % CFG.tile_size) % CFG.tile_size
-            image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0) 
             
             # Resize the image to match the expected size
             if (any(sub in fragment_id for sub in CFG.frags_ratio1)):
@@ -72,7 +66,12 @@ def read_image_mask(fragment_id, CFG=None):
                 new_w = int(image.shape[1] * scale)
                 new_h = int(image.shape[0] * scale)
                 image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            image_shape = (image.shape[1], image.shape[0])
                 
+            pad0 = (CFG.size - image.shape[0] % CFG.size) % CFG.size
+            pad1 = (CFG.size - image.shape[1] % CFG.size) % CFG.size
+            image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
+           
             image=np.clip(image,0,200)
             images.append(image)
 
@@ -85,28 +84,31 @@ def read_image_mask(fragment_id, CFG=None):
         fragment_mask = np.zeros(images.shape[:2], dtype=np.uint8)  # shape = (H, W)
         # # READ INK LABELS
         inklabel_files = glob.glob(f"{CFG.segment_path}/{fragment_id}/*inklabels.*")
+        
         if len(inklabel_files) > 0:
             mask = cv2.imread(inklabel_files[0], 0)
         else:
             print(f"Creating empty mask for {fragment_id}")
             mask = np.zeros(images[0].shape)
-        
-        if image_shape!=mask.shape[0]:
-            mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
-        mask = mask.astype('float32')
-        mask/=255
-        
-        mask = cv2.resize(mask, (images.shape[1], images.shape[0]), interpolation=cv2.INTER_AREA)
+            
+        mask =  cv2.resize(mask , image_shape, interpolation=cv2.INTER_AREA)
     
-        # fragment_mask=cv2.imread(f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
         path = f"{CFG.segment_path}{fragment_id}/{fragment_id}_mask.png"
         fragment_mask = cv2.imread(path,0)
-
-        if image_shape!=fragment_mask.shape[0]:
-            fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
             
 
-        fragment_mask = cv2.resize(fragment_mask, (images.shape[1], images.shape[0]), interpolation=cv2.INTER_AREA)
+        fragment_mask =  cv2.resize(fragment_mask , image_shape, interpolation=cv2.INTER_AREA)
+        pad0 = (CFG.size - fragment_mask.shape[0] % CFG.size) % CFG.size
+        pad1 = (CFG.size - fragment_mask.shape[1] % CFG.size) % CFG.size
+        fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
+
+        mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
+        
+        
+        mask = mask.astype('float32')
+        mask/=255
+        fragment_mask = fragment_mask.astype('float32')/255
+        
             
     except:
             print(fragment_id,"no used")
@@ -139,7 +141,7 @@ def get_train_valid_dataset(CFG=None):
 
         for a in y1_list:
             for b in x1_list:
-                if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size] == 0):
+                if np.mean(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]) >= 0.3:
                     
                     # if fragment_id =='s4':
                     #     # if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.95):

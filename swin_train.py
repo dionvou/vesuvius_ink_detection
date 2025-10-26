@@ -53,12 +53,12 @@ class CFG:
     segment_path = './train_scrolls/'
     
     start_idx = 26
-    in_chans = 8
+    in_chans =10
     valid_chans = 8
     
-    size = 64
-    tile_size = 64
-    stride = tile_size // 4
+    size = 224
+    tile_size = 224
+    stride = tile_size // 8
 
     train_batch_size = 12# 32
     valid_batch_size = 20
@@ -71,11 +71,11 @@ class CFG:
     frags_ratio1 = ['frag','re']
     frags_ratio2 = ['s4','202']
     ratio1 = 2
-    ratio2 = 2
+    ratio2 = 1
     
     # ============== fold =============
-    segments = ['20231210132040','s4']
-    valid_id = '20231210132040'#20231210132040'20231215151901
+    segments = ['20231215151901','frag5']
+    valid_id = '20231215151901'#20231210132040'20231215151901
     norm = False
     aug = None
     # ============== fixed =============
@@ -149,6 +149,7 @@ for batch in [1,2]:
                     run_slug=f'_SWIN_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.valid_chans},norm={CFG.norm},fourth={CFG.aug}'
 
                     valid_mask_gt = cv2.imread(f"{CFG.segment_path}{fragment_id}/{fragment_id}_inklabels.png", 0)
+                    
 
                     if any(sub in fragment_id for sub in CFG.frags_ratio1):
                         scale = 1 / CFG.ratio1
@@ -161,6 +162,11 @@ for batch in [1,2]:
                         new_w = int(valid_mask_gt.shape[1] * scale)
                         new_h = int(valid_mask_gt.shape[0] * scale)
                         valid_mask_gt = cv2.resize(valid_mask_gt, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                   
+                    
+                    pad0 = (CFG.size - valid_mask_gt.shape[0] % CFG.size) % CFG.size
+                    pad1 = (CFG.size - valid_mask_gt.shape[1] % CFG.size) % CFG.size
+                    valid_mask_gt = np.pad(valid_mask_gt, [(0, pad0), (0, pad1)], constant_values=0)
                     pred_shape=valid_mask_gt.shape
 
                     train_images, train_masks, valid_images, valid_masks, valid_xyxys = utils.get_train_valid_dataset(CFG)

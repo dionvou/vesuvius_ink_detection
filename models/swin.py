@@ -33,7 +33,7 @@ class TimesformerDataset(Dataset):
         self.rotate = A.Compose([A.Rotate(8,p=1)])
         self.xyxys=xyxys
         self.aug = aug
-        self.scale_factor = 32
+        self.scale_factor = 16
         
         self.video_transform = T.Compose([
             T.ConvertImageDtype(torch.float32),  # scales to [0.0, 1.0]
@@ -112,12 +112,8 @@ class TimesformerDataset(Dataset):
         Channel shuffle augmentation that returns exactly 24 channels.
         """
         # Shuffle channels randomly
-        shuffled_indices = np.random.permutation(self.cfg.in_chans)
+        shuffled_indices = np.random.permutation(self.cfg.valid_chans)
         image_shuffled = image[..., shuffled_indices]
-
-        # Keep only the first 24 (or self.cfg.valid_chans)
-        cropping_num = self.cfg.valid_chans
-        image_shuffled = image_shuffled[..., :cropping_num]
 
         return image_shuffled
 
@@ -733,86 +729,23 @@ class SwinModel(pl.LightningModule):
         return output
 
 
-# # GOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD  
-# class SwinModel(pl.LightningModule):
-#     def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
-#         super(SwinModel, self).__init__()
-
-#         self.save_hyperparameters()
-#         self.mask_pred = np.zeros(self.hparams.pred_shape)
-#         self.mask_count = np.zeros(self.hparams.pred_shape)
-#         self.IGNORE_INDEX = 127
-
-#         self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
-#         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
-
-#         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
-
-#         backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
-
-
-#         # Modify first conv layer to accept 1 channel instead of 3
-#         old_proj = backbone.patch_embed.proj
-#         new_proj = nn.Conv3d(
-#             in_channels=1,
-#             out_channels=old_proj.out_channels,
-#             kernel_size=old_proj.kernel_size,
-#             stride=old_proj.stride,
-#             padding=old_proj.padding,
-#             bias=old_proj.bias is not None
-#         )
-#         # Initialize weights by summing across RGB channels
-#         with torch.no_grad():
-#             # old_proj.weight shape: [out_channels, 3, kT, kH, kW]
-#             summed = old_proj.weight.sum(dim=1, keepdim=True)  # -> [out_channels, 1, kT, kH, kW]
-#             new_proj.weight.copy_(summed)
-
-#             # If bias exists, copy it too
-#             if old_proj.bias is not None:
-#                 new_proj.bias.copy_(old_proj.bias)
-#             # embed_dim = out.shape[1]  # channel dimension
-
-
-#         # Replace the old conv with the new one
-#         backbone.patch_embed.proj = new_proj
-#         embed_dim = 384
-#         self.backbone = backbone
-#         self.backbone.head = nn.Identity()
-
-
-#         self.classifier = nn.Sequential(
-#                 nn.Linear(embed_dim,(self.hparams.size//28)**2),
-#         )
-    
-#     def forward(self, x):
-
-#         x = x.permute(0,2,1,3,4)
-#         preds = self.backbone(x)  # runs backbone, sets self.feature
-#         preds = self.classifier(preds)
-#         preds = preds.view(-1,1,self.hparams.size//28,self.hparams.size//28)
-#         return preds
-
-
-## GOOOOOOOOOOOOOOOOOODDDDDDDDDDDDD
+# GOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD  
 class SwinModel(pl.LightningModule):
-
-    def __init__(self, pred_shape, size, lr, scheduler=None,wandb_logger=None,freeze=False):
+    def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
         super(SwinModel, self).__init__()
+
         self.save_hyperparameters()
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
         self.IGNORE_INDEX = 127
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25,ignore_index=self.IGNORE_INDEX)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
 
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
-        # model = swin_transformer.swin3d_t(weights="KINETICS400_V1")#KINETICS400_IMAGENET22K_V1 
-        
-        
-        # self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
-        # self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
+
         backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
+
 
         # Modify first conv layer to accept 1 channel instead of 3
         old_proj = backbone.patch_embed.proj
@@ -827,56 +760,119 @@ class SwinModel(pl.LightningModule):
         # Initialize weights by summing across RGB channels
         with torch.no_grad():
             # old_proj.weight shape: [out_channels, 3, kT, kH, kW]
-            summed = old_proj.weight.sum(dim=1, keepdim=True)   # -> [out_channels, 1, kT, kH, kW]
+            summed = old_proj.weight.sum(dim=1, keepdim=True)  # -> [out_channels, 1, kT, kH, kW]
             new_proj.weight.copy_(summed)
 
             # If bias exists, copy it too
             if old_proj.bias is not None:
                 new_proj.bias.copy_(old_proj.bias)
+            # embed_dim = out.shape[1]  # channel dimension
+
 
         # Replace the old conv with the new one
         backbone.patch_embed.proj = new_proj
+        embed_dim = 768
         self.backbone = backbone
-        
-        # backbone = nn.Sequential(*list(backbone.children())[:-2]) 
-
-        # self.backbone = swin_transformer.swin3d_t(weights="KINETICS400_V1") #KINETICS400_IMAGENET22K_V1 
         self.backbone.head = nn.Identity()
-        # self.decoder = Decoder2D(in_channels=768, num_classes=1)
-        # self.decoder = Decoder2D(in_channels=512, num_classes=1)
-        # self.classifier = nn.Sequential(
-        #     nn.Linear(384, 1),  
-        # )
+
+
         self.classifier = nn.Sequential(
-            nn.Linear(768, 1),  
+                nn.Linear(embed_dim,(self.hparams.size//16)**2),
         )
-
-        self.features = None
-        # self.hook_handle = self.backbone.norm.register_forward_hook(self._hook_fn)
-        # self.hook_handle = self.backbone.features[-1].register_forward_hook(self._hook_fn)
-        self.hook_handle = self.backbone.norm.register_forward_hook(self._hook_fn)
-        # self.post_norm = nn.LayerNorm(normalized_shape=(768,), eps=1e-05, elementwise_affine=True)
-        self.pool = nn.AdaptiveAvgPool3d((1, None, None))  # collapse T → 1
-
-
-        # self.hook_handle = self.backbone.norm.register_forward_hook(self._hook_fn)
-
-    def _hook_fn(self, module, input, output):
-        self.features = output
-
+    
     def forward(self, x):
+
         x = x.permute(0,2,1,3,4)
-        _ = self.backbone(x)  # runs backbone, sets self.features
-        feat = self.features  # (B, T_patch, H_patch, W_patch, C)
-        # feat = self.post_norm(feat) 
-        feat = feat.permute(0, 4, 1, 2, 3)  # (B, C, T_patch, H_patch, W_patch)
-        feat_2d = self.pool(feat).squeeze()
-        # feat_2d = feat.max(dim=2)[0]  # average temporal patches: (B, C, H_patch, W_patch)
-        # print(feat_2d.shape)
-        seg_logits  = self.classifier(feat_2d.permute(0, 2, 3, 1)).view(-1,1,self.hparams.size//32,self.hparams.size//32)
-        # print(seg_logits.shape)
-        # seg_logits = self.decoder(feat_2d)  # (B, num_classes, 224, 224)
-        return seg_logits
+        preds = self.backbone(x)  # runs backbone, sets self.feature
+        preds = self.classifier(preds)
+        preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
+        return preds
+
+
+# ## GOOOOOOOOOOOOOOOOOODDDDDDDDDDDDD
+# class SwinModel(pl.LightningModule):
+
+#     def __init__(self, pred_shape, size, lr, scheduler=None,wandb_logger=None,freeze=False):
+#         super(SwinModel, self).__init__()
+#         self.save_hyperparameters()
+#         self.mask_pred = np.zeros(self.hparams.pred_shape)
+#         self.mask_count = np.zeros(self.hparams.pred_shape)
+#         self.IGNORE_INDEX = 127
+
+#         self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.25,ignore_index=self.IGNORE_INDEX)
+#         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
+
+#         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
+#         # model = swin_transformer.swin3d_t(weights="KINETICS400_V1")#KINETICS400_IMAGENET22K_V1 
+        
+        
+#         # self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
+#         # self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
+#         backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
+
+#         # Modify first conv layer to accept 1 channel instead of 3
+#         old_proj = backbone.patch_embed.proj
+#         new_proj = nn.Conv3d(
+#             in_channels=1,
+#             out_channels=old_proj.out_channels,
+#             kernel_size=old_proj.kernel_size,
+#             stride=old_proj.stride,
+#             padding=old_proj.padding,
+#             bias=old_proj.bias is not None
+#         )
+#         # Initialize weights by summing across RGB channels
+#         with torch.no_grad():
+#             # old_proj.weight shape: [out_channels, 3, kT, kH, kW]
+#             summed = old_proj.weight.sum(dim=1, keepdim=True)   # -> [out_channels, 1, kT, kH, kW]
+#             new_proj.weight.copy_(summed)
+
+#             # If bias exists, copy it too
+#             if old_proj.bias is not None:
+#                 new_proj.bias.copy_(old_proj.bias)
+
+#         # Replace the old conv with the new one
+#         backbone.patch_embed.proj = new_proj
+#         self.backbone = backbone
+        
+#         # backbone = nn.Sequential(*list(backbone.children())[:-2]) 
+
+#         # self.backbone = swin_transformer.swin3d_t(weights="KINETICS400_V1") #KINETICS400_IMAGENET22K_V1 
+#         self.backbone.head = nn.Identity()
+#         # self.decoder = Decoder2D(in_channels=768, num_classes=1)
+#         # self.decoder = Decoder2D(in_channels=512, num_classes=1)
+#         # self.classifier = nn.Sequential(
+#         #     nn.Linear(384, 1),  
+#         # )
+#         self.classifier = nn.Sequential(
+#             nn.Linear(768, 1),  
+#         )
+
+#         self.features = None
+#         # self.hook_handle = self.backbone.norm.register_forward_hook(self._hook_fn)
+#         # self.hook_handle = self.backbone.features[-1].register_forward_hook(self._hook_fn)
+#         self.hook_handle = self.backbone.norm.register_forward_hook(self._hook_fn)
+#         # self.post_norm = nn.LayerNorm(normalized_shape=(768,), eps=1e-05, elementwise_affine=True)
+#         self.pool = nn.AdaptiveAvgPool3d((1, None, None))  # collapse T → 1
+
+
+#         # self.hook_handle = self.backbone.norm.register_forward_hook(self._hook_fn)
+
+#     def _hook_fn(self, module, input, output):
+#         self.features = output
+
+#     def forward(self, x):
+#         x = x.permute(0,2,1,3,4)
+#         _ = self.backbone(x)  # runs backbone, sets self.features
+#         feat = self.features  # (B, T_patch, H_patch, W_patch, C)
+#         # feat = self.post_norm(feat) 
+#         feat = feat.permute(0, 4, 1, 2, 3)  # (B, C, T_patch, H_patch, W_patch)
+#         # feat_2d = self.pool(feat).squeeze()
+#         feat_2d = feat.max(dim=2)[0]  # average temporal patches: (B, C, H_patch, W_patch)
+#         # print(feat_2d.shape)
+#         seg_logits  = self.classifier(feat_2d.permute(0, 2, 3, 1)).view(-1,1,self.hparams.size//32,self.hparams.size//32)
+#         # print(seg_logits.shape)
+#         # seg_logits = self.decoder(feat_2d)  # (B, num_classes, 224, 224)
+#         return seg_logits
 # # GOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD  
 # class SwinModel(pl.LightningModule):
 #     def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
@@ -1400,7 +1396,7 @@ class SwinModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=32,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=16,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)

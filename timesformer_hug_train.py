@@ -53,9 +53,9 @@ class CFG:
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 26
-    in_chans = 10
-    valid_chans = 8
+    start_idx = 22
+    in_chans = 16
+    valid_chans = 16
     
     size = 224
     tile_size = 224
@@ -71,7 +71,7 @@ class CFG:
     frags_ratio1 = ['frag','re']
     frags_ratio2 = ['202','s4','left']
     ratio1 = 2
-    ratio2 = 2
+    ratio2 = 1
     
     # ============== fold =============
     segments = ['20231215151901','frag5'] 
@@ -147,6 +147,9 @@ elif any(sub in fragment_id for sub in CFG.frags_ratio2):
     new_w = int(valid_mask_gt.shape[1] * scale)
     new_h = int(valid_mask_gt.shape[0] * scale)
     valid_mask_gt = cv2.resize(valid_mask_gt, (new_w, new_h), interpolation=cv2.INTER_AREA)
+pad0 = (CFG.size - valid_mask_gt.shape[0] % CFG.size) % CFG.size
+pad1 = (CFG.size - valid_mask_gt.shape[1] % CFG.size) % CFG.size
+valid_mask_gt = np.pad(valid_mask_gt, [(0, pad0), (0, pad1)], constant_values=0)
 pred_shape=valid_mask_gt.shape
 
 train_images, train_masks, valid_images, valid_masks, valid_xyxys = utils.get_train_valid_dataset(CFG)
@@ -177,7 +180,7 @@ wandb_logger = WandbLogger(project="vesivus",name=run_slug)
 model = timesformer_hug.TimesfomerModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger)
 wandb_logger.watch(model, log="all", log_freq=100)
 
-# model = timesformer_hug.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['frag5', 'frag1', '20231215151901']_valid=20231215151901_size=224_lr=2e-05_in_chans=16_epoch=7.ckpt")
+model = timesformer_hug.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/TF_['20231215151901', 'frag5']_valid=20231215151901_size=224_lr=2e-05_in_chans=16_epoch=3.ckpt")
 trainer = pl.Trainer(
     max_epochs=CFG.epochs,
     accelerator="gpu",
@@ -194,6 +197,6 @@ trainer = pl.Trainer(
     ]
 
 )
-# trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
+trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
 trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
 wandb.finish()
