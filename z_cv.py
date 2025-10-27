@@ -1,0 +1,769 @@
+
+import os.path as osp
+import os
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+import pytorch_lightning as pl
+from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
+
+import random
+from transformers import SegformerForSemanticSegmentation
+import yaml
+
+import numpy as np
+
+import wandb
+
+from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import OneCycleLR
+
+import pandas as pd
+import os
+import random
+from contextlib import contextmanager
+import cv2
+
+import scipy as sp
+import numpy as np
+import pandas as pd
+
+from tqdm.auto import tqdm
+
+import argparse
+import torch
+import torch.nn as nn
+from torch.optim import AdamW
+
+import datetime
+import segmentation_models_pytorch as smp
+import numpy as np
+from torch.utils.data import DataLoader, Dataset
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+from torch.utils.data import DataLoader, Dataset
+from models.i3dallnl import InceptionI3d
+import torch.nn as nn
+import torch
+from warmup_scheduler import GradualWarmupScheduler
+from scipy import ndimage
+from models.resnetall import generate_model
+import PIL.Image
+from PIL import Image, ImageOps
+from skimage.transform import resize
+import tifffile as tiff
+from models import unetr
+
+from pytorch_lightning.utilities import rank_zero_only
+
+print = rank_zero_only(print)
+
+
+PIL.Image.MAX_IMAGE_PIXELS = 933120000
+
+class CFG:
+    # ============== comp exp name =============
+    comp_name = 'vesuvius'
+
+    # comp_dir_path = './'
+    comp_dir_path = './'
+    comp_folder_name = './'
+    # comp_dataset_path = f'{comp_dir_path}datasets/{comp_folder_name}/'
+    comp_dataset_path = f'./'
+    
+    exp_name = 'pretraining_all'
+    
+    # ============== model cfg =============
+    frags = ['20231210132040','frag5','frag1']#,'20231215151901']#'frag1',
+    valid_id = '20231210132040'#'20240304141530'#'20231210132040',20240716140050
+    
+    # Change the size of fragments2
+    frags_ratio1 = ['frag','re']
+    frags_ratio2 = ['s4','202','alpha']
+    ratio1 = 2
+    ratio2 = 2
+    backbone='resnet3d'
+    # ============== training cfg =============
+    size = 256
+    tile_size = 256
+    stride = tile_size // 8
+
+    train_batch_size =  12
+    valid_batch_size = 25
+
+
+    scheduler = 'GradualWarmupSchedulerV2'
+    
+    start_idx = 10
+    in_chans = 30
+    valid_chans = 24
+    
+    epochs = 40 # 30
+    lr = 2e-5
+    # ============== fold =============
+    
+    # ============== fixed =============
+    pretrained = True
+
+    num_workers = 8
+
+    seed = 0
+    
+    frags_ = []
+
+    outputs_path = f'./outputs/{comp_name}/{exp_name}/'
+
+    submission_dir = outputs_path + 'submissions/'
+    submission_path = submission_dir + f'submission_{exp_name}.csv'
+
+    model_dir = outputs_path + \
+        f'{comp_name}-models/'
+
+    figures_dir = outputs_path + 'figures/'
+
+    log_dir = outputs_path + 'logs/'
+    log_path = log_dir + f'{exp_name}.txt'
+
+       # ============== augmentation =============
+    train_aug_list = [
+        A.Resize(size, size),
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+
+        A.RandomBrightnessContrast(p=0.75),
+        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.15,p=0.75),
+        A.OneOf([
+                A.GaussNoise(var_limit=[10, 50]),
+                A.GaussianBlur(),
+                A.MotionBlur(),
+                ], p=0.4),
+        # A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
+        A.CoarseDropout(max_holes=8, max_width=int(size * 0.05), max_height=int(size * 0.05), 
+                        mask_fill_value=0, p=0.5),
+        A.Normalize(
+            mean=(0.5),
+            std=(0.5),
+        ),
+
+        ToTensorV2(transpose_mask=True),
+    ]
+
+
+    valid_aug_list = [
+        A.Resize(size, size),
+        A.Normalize(
+            mean=(0.5),
+            std=(0.5),
+        ),
+        ToTensorV2(transpose_mask=True),
+    ]
+
+    rotate = A.Compose([A.Rotate(5,p=1)])
+
+def init_logger(log_file):
+    from logging import getLogger, INFO, FileHandler, Formatter, StreamHandler
+    logger = getLogger(__name__)
+    logger.setLevel(INFO)
+    handler1 = StreamHandler()
+    handler1.setFormatter(Formatter("%(message)s"))
+    handler2 = FileHandler(filename=log_file)
+    handler2.setFormatter(Formatter("%(message)s"))
+    logger.addHandler(handler1)
+    logger.addHandler(handler2)
+    return logger
+
+def set_seed(seed=None, cudnn_deterministic=True):
+    if seed is None:
+        seed = 42
+
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = cudnn_deterministic
+    torch.backends.cudnn.benchmark = False
+def make_dirs(cfg):
+    for dir in [cfg.model_dir, cfg.figures_dir, cfg.submission_dir, cfg.log_dir]:
+        os.makedirs(dir, exist_ok=True)
+        
+def cfg_init(cfg, mode='train'):
+    set_seed(cfg.seed)
+    if mode == 'train':
+        make_dirs(cfg)
+        
+cfg_init(CFG)
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+def read_image_mask(fragment_id, start_idx, in_chans):
+
+    images = []
+    start_idx = int(start_idx)
+    end_idx = start_idx + in_chans
+    idxs = range(start_idx, end_idx)
+    
+    if fragment_id==CFG.valid_id:
+
+        print('valid')
+        start_idx = int(start_idx+5+(CFG.in_chans-CFG.valid_chans)//2)
+        end_idx = start_idx + CFG.valid_chans
+        idxs = range(start_idx, end_idx)
+        print(start_idx)
+        
+    for i in idxs:
+    
+        tif_path = f"train_scrolls/{fragment_id}/layers/{i:02}.tif"
+        # jpg_path = f"train_scrolls/{fragment_id}/layers/{i:02}.jpg"
+
+        if os.path.exists(tif_path):
+
+            image = cv2.imread(f"train_scrolls/{fragment_id}/layers/{i:02}.tif", 0)
+        else:
+            image = cv2.imread(f"train_scrolls/{fragment_id}/layers/{i:02}.png", 0)
+
+        if (any(sub in fragment_id for sub in CFG.frags_ratio1)):
+            scale = 1 / CFG.ratio1
+            new_w = int(image.shape[1] * scale) 
+            new_h = int(image.shape[0] * scale) 
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        elif (any(sub in fragment_id for sub in CFG.frags_ratio2)):
+            scale = 1 / CFG.ratio2
+            new_w = int(image.shape[1] * scale)
+            new_h = int(image.shape[0] * scale)
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        else:
+            scale = 1 / 1
+            new_w = int(image.shape[1] * scale)
+            new_h = int(image.shape[0] * scale)
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+               
+        # # HERE RESIZE
+        image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        image_shape = (image.shape[1], image.shape[0])
+        
+        pad0 = (CFG.size - image.shape[0] % CFG.size) % CFG.size
+        pad1 = (CFG.size - image.shape[1] % CFG.size) % CFG.size
+        image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
+
+        image=np.clip(image,0,200)
+        images.append(image)
+        
+    images = np.stack(images, axis=2)
+    print('shape',images.shape, flush=True)
+
+    mask = cv2.imread( f"train_scrolls/{fragment_id}/{fragment_id}_inklabels.png", 0)
+    mask = cv2.resize(mask , image_shape, interpolation=cv2.INTER_NEAREST)
+    
+    fragment_mask=cv2.imread(f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
+    fragment_mask = cv2.resize(fragment_mask, image_shape, interpolation = cv2.INTER_NEAREST)
+    pad0 = (CFG.size - fragment_mask.shape[0] % CFG.size) % CFG.size
+    pad1 = (CFG.size - fragment_mask.shape[1] % CFG.size) % CFG.size
+    fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
+    mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
+    
+    mask = mask.astype('float32')
+    fragment_mask = fragment_mask.astype('float32')
+    mask/=255 
+    fragment_mask/=255
+    assert images.shape[0] == mask.shape[0], f"Shape mismatch: images={images.shape}, mask={mask.shape}, fragment_mask={fragment_mask.shape}"
+
+    return images, mask, fragment_mask
+
+def get_train_valid_dataset():
+    train_images = []
+    train_masks = []
+
+    valid_images = []
+    valid_masks = []
+    valid_xyxys = []
+        
+    for fragment_id in CFG.frags:
+        print('reading ',fragment_id)
+        image, mask,fragment_mask = read_image_mask(fragment_id,CFG.start_idx,CFG.in_chans)
+
+        stride= CFG.stride
+        x1_list = list(range(0, image.shape[1]-CFG.tile_size+1,stride))
+        y1_list = list(range(0, image.shape[0]-CFG.tile_size+1, stride))
+        windows_dict={}
+        for a in y1_list:
+            for b in x1_list:
+                for yi in range(0,CFG.tile_size,CFG.size):
+                    for xi in range(0,CFG.tile_size,CFG.size):
+                        y1=a+yi
+                        x1=b+xi
+                        y2=y1+CFG.size
+                        x2=x1+CFG.size
+
+                        if fragment_id=='frag5':
+                            if (y1,y2,x1,x2) not in windows_dict:
+                                if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.1):
+                                    if np.mean(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]) >= 0.5:
+                                        train_images.append(image[y1:y2, x1:x2])
+                                        train_masks.append(mask[y1:y2, x1:x2, None])
+                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
+                                        windows_dict[(y1,y2,x1,x2)]='1'
+                        elif fragment_id=='s4':
+                            if (y1,y2,x1,x2) not in windows_dict:
+                                if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.1):
+                                    if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]==0):
+                                        train_images.append(image[y1:y2, x1:x2])
+                                        tile_mask = mask[y1:y2, x1:x2]
+                                        tile_mask = cv2.GaussianBlur(tile_mask, (15,15), 0)  # simple soft smoothing
+                                        train_masks.append(tile_mask[..., None])
+                                        # train_masks.append(mask[y1:y2, x1:x2, None])
+                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
+                                        windows_dict[(y1,y2,x1,x2)]='1'
+                        elif fragment_id!=CFG.valid_id:
+                            if (y1,y2,x1,x2) not in windows_dict:
+                                if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.1):
+                                    if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]==0):
+                                        train_images.append(image[y1:y2, x1:x2])
+                                        train_masks.append(mask[y1:y2, x1:x2, None])
+                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
+                                        windows_dict[(y1,y2,x1,x2)]='1'
+                        elif fragment_id==CFG.valid_id:
+                            if (y1,y2,x1,x2) not in windows_dict:
+                                if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]==0):
+                                        valid_images.append(image[y1:y2, x1:x2])
+                                        valid_masks.append(mask[y1:y2, x1:x2, None])
+                                        valid_xyxys.append([x1, y1, x2, y2])
+                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.valid_chans)
+                                        windows_dict[(y1,y2,x1,x2)]='1'
+
+
+    return train_images, train_masks, valid_images, valid_masks, valid_xyxys
+
+def get_transforms(data, cfg):
+    if data == 'train':
+        aug = A.Compose(cfg.train_aug_list)
+    elif data == 'valid':
+        aug = A.Compose(cfg.valid_aug_list)
+    return aug
+
+class CustomDataset(Dataset):
+    def __init__(self, images ,cfg,xyxys=None, labels=None, transform=None, reference_image=None, do_hist_match=False):
+        self.images = images
+        self.cfg = cfg
+        self.labels = labels
+        
+        self.transform = transform
+        self.xyxys=xyxys
+        self.rotate=CFG.rotate
+        
+    def __len__(self):
+        return len(self.images)
+    
+    # def fourth_augment(self,image):
+    #     image_tmp = np.zeros_like(image)
+    #     cropping_num = random.randint(24, 30)
+
+    #     start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
+    #     crop_indices = np.arange(start_idx, start_idx + cropping_num)
+
+    #     start_paste_idx = random.randint(0, self.cfg.in_chans - cropping_num)
+
+    #     tmp = np.arange(start_paste_idx, cropping_num)
+    #     np.random.shuffle(tmp)
+
+    #     cutout_idx = random.randint(0, 2)
+    #     temporal_random_cutout_idx = tmp[:cutout_idx]
+
+    #     image_tmp[..., start_paste_idx : start_paste_idx + cropping_num] = image[..., crop_indices]
+
+    #     if random.random() > 0.4:
+    #         image_tmp[..., temporal_random_cutout_idx] = 0
+    #     image = image_tmp
+    #     return image
+    def fourth_augment(self, image):
+        """
+        Custom channel augmentation that returns exactly 24 channels.
+        """
+        # always select 24 channels
+        remove_n = 1
+        cropping_num = CFG.valid_chans + remove_n
+
+        # pick crop indices
+        start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
+        crop_indices = np.arange(start_idx, start_idx + cropping_num)
+
+        # pick where to paste them
+        start_paste_idx = random.randint(0, self.cfg.in_chans - cropping_num)
+        
+        # container
+        image_tmp = np.zeros_like(image)
+        image_tmp[..., start_paste_idx:start_paste_idx + cropping_num] = image[..., crop_indices]
+        
+        # --- remove 2 random channels (instead of blacking out) ---
+        all_indices = np.arange(start_paste_idx, start_paste_idx + cropping_num)
+        remove_idx = np.random.choice(all_indices, remove_n, replace=False)
+
+        # keep all except removed ones
+        keep_idx = np.array([i for i in all_indices if i not in remove_idx])
+        image_tmp = image_tmp[..., keep_idx]
+
+        return image_tmp
+
+    def shuffle(self, image):
+        """
+        Channel shuffle augmentation that returns exactly 24 channels.
+        """
+        # Shuffle channels randomly
+        shuffled_indices = np.random.permutation(self.cfg.valid_chans)
+        image_shuffled = image[..., shuffled_indices]
+
+        # Keep only the first 24 (or self.cfg.valid_chans)
+        cropping_num = self.cfg.valid_chans
+        image_shuffled = image_shuffled[..., :cropping_num]
+
+        return image_shuffled
+
+
+    def __getitem__(self, idx):
+        if self.xyxys is not None:
+            image = self.images[idx]
+            label = self.labels[idx]
+            xy=self.xyxys[idx]
+            
+            if self.transform:
+                data = self.transform(image=image, mask=label)
+                image = data['image'].unsqueeze(0)
+                label = data['mask']
+                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//4,self.cfg.size//4)).squeeze(0)
+            return image, label,xy
+        else:
+            image = self.images[idx]
+            label = self.labels[idx]
+            
+            image=self.fourth_augment(image)
+            
+            if self.transform:
+                data = self.transform(image=image, mask=label)
+                image = data['image'].unsqueeze(0)
+                label = data['mask']
+                label=F.interpolate(label.unsqueeze(0),(self.cfg.size//4,self.cfg.size//4)).squeeze(0)
+            return image, label
+
+def init_weights(m):
+    if isinstance(m, nn.Conv2d):
+        nn.init.kaiming_normal_(m, mode='fan_out', nonlinearity='relu')
+
+class Decoder(nn.Module):
+    def __init__(self, encoder_dims, upscale):
+        super().__init__()
+        self.convs = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(encoder_dims[i]+encoder_dims[i-1], encoder_dims[i-1], 3, 1, 1, bias=False),
+                nn.BatchNorm2d(encoder_dims[i-1]),
+                nn.ReLU(inplace=True)
+            ) for i in range(1, len(encoder_dims))])
+
+        self.logit = nn.Conv2d(encoder_dims[0], 1, 1, 1, 0)
+        self.up = nn.Upsample(scale_factor=upscale, mode="bilinear")
+
+    def forward(self, feature_maps):
+        for i in range(len(feature_maps)-1, 0, -1):
+            f_up = F.interpolate(feature_maps[i], scale_factor=2, mode="bilinear")
+            f = torch.cat([feature_maps[i-1], f_up], dim=1)
+            f_down = self.convs[i-1](f)
+            feature_maps[i-1] = f_down
+
+        x = self.logit(feature_maps[0])
+        mask = self.up(x)
+        return mask
+
+class RegressionPLModel(pl.LightningModule):
+    def __init__(self,pred_shape,size=CFG.size,enc='',with_norm=False,total_steps=780,a=0.7,b=0.3, smooth = 0.25, dropout=None, max=True):
+        super(RegressionPLModel, self).__init__()
+
+        self.save_hyperparameters()
+        self.mask_pred = np.zeros(self.hparams.pred_shape)
+        self.mask_count = np.zeros(self.hparams.pred_shape)
+
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth = self.hparams.smooth)
+        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=self.hparams.smooth)
+        self.loss_func= lambda x,y: self.hparams.a * self.loss_func1(x,y) + self.hparams.b*self.loss_func2(x,y)
+        self.mask_gt = np.zeros(self.hparams.pred_shape)
+        
+        self.backbone = generate_model(model_depth=101, n_input_channels=1,forward_features=True,n_classes=1039)
+        state_dict=torch.load('./checkpoints/r3d101_KM_200ep.pth')["state_dict"]
+        conv1_weight = state_dict['conv1.weight']
+        state_dict['conv1.weight'] = conv1_weight.sum(dim=1, keepdim=True)
+        self.backbone.load_state_dict(state_dict,strict=False)
+        # self.backbone=InceptionI3d(in_channels=1,num_classes=512,non_local=True)
+        # self.backbone.load_state_dict(torch.load('./pretraining_i3d_epoch=3.pt'),strict=False)
+        self.decoder = Decoder(encoder_dims=[x.size(1) for x in self.backbone(torch.rand(1,1,20,256,256))], upscale=1)
+        # for param in self.backbone.parameters():
+        #     param.requires_grad = False
+
+        # # Segformer expects 2D input with shape (B, C, H, W)
+        # self.encoder_2d = SegformerForSemanticSegmentation.from_pretrained(
+        #     "nvidia/mit-b0",
+        #     num_labels=1,
+        #     ignore_mismatched_sizes=True,
+        #     num_channels=3
+        # )        
+        # for param in self.encoder_2d.parameters():
+        #     param.requires_grad = False
+
+        # init_weights(self.decoder)
+
+        self.normalization=nn.BatchNorm3d(num_features=1) 
+    
+    # BACKBONE FORWARD
+    def forward(self, x):
+        if self.hparams.with_norm == True:
+            x=self.normalization(x)
+        feat_maps = self.backbone(x)
+        if self.hparams.max==True:
+            feat_maps_pooled = [torch.max(f, dim=2)[0] for f in feat_maps]
+        else:
+            feat_maps_pooled = [torch.mean(f, dim=2) for f in feat_maps]
+
+        pred_mask = self.decoder(feat_maps_pooled)
+        return pred_mask
+    
+    #  # BACKBONE FORWARD
+    # def forward(self, x):
+    #     if x.ndim==4:
+    #         x=x[:,None]
+    #     if self.hparams.with_norm:
+    #         x=self.normalization(x)
+    #     feat_maps = self.backbone(x)        
+    #     feat_maps_pooled = [torch.max(f, dim=2)[0].contiguous() for f in feat_maps]
+    #     # pred_mask = self.decoder(feat_maps_pooled)
+    #     pred_mask = self.decoder(feat_maps_pooled).contiguous()
+
+    #     x = self.encoder_2d(pred_mask)
+    #     return x.logits
+    
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        outputs = self(x)
+        loss1 = self.loss_func(outputs, y)
+        
+        if torch.isnan(loss1):
+            print("Loss nan encountered")
+        # Log the loss
+        self.log("train/total_loss", loss1.item(), on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)
+        self.log("lr", self.optimizers().param_groups[0]["lr"],on_step=True, prog_bar=True,sync_dist=True)
+
+        return {"loss": loss1}
+    
+    def validation_step(self, batch, batch_idx):
+        x, y, xyxys = batch
+        batch_size = x.size(0)
+        outputs = self(x)
+        
+        loss1 = self.loss_func(outputs, y)
+        y_preds = torch.sigmoid(outputs).to('cpu')
+        y_cpu = y.to('cpu')  # Move ground truth to CPU
+        
+        for i, (x1, y1, x2, y2) in enumerate(xyxys):
+            # Prediction
+            pred_patch = F.interpolate(
+                y_preds[i].unsqueeze(0).float(),
+                size=(self.hparams.size, self.hparams.size),
+                mode='bilinear'
+            ).squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += pred_patch
+            
+            # Ground truth
+            gt_patch = F.interpolate(
+                y_cpu[i].unsqueeze(0).float(),
+                size=(self.hparams.size, self.hparams.size),
+                mode='bilinear'
+            ).squeeze(0).squeeze(0).numpy()
+            self.mask_gt[y1:y2, x1:x2] = gt_patch  # Use = not += for ground truth
+            
+            self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
+
+        self.log("val/total_loss", loss1.item(), on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)        
+        return {"loss": loss1}
+
+    def on_validation_epoch_end(self):
+        # Average overlapping predictions
+        self.mask_pred = np.divide(
+            self.mask_pred, 
+            self.mask_count, 
+            out=np.zeros_like(self.mask_pred), 
+            where=self.mask_count != 0
+        )
+        
+        # Get ground truth mask
+        pred_binary = (self.mask_pred > 0.5).astype(np.float32)
+        
+        # Calculate metrics
+        if hasattr(self, 'mask_gt'):
+            gt_binary = self.mask_gt.astype(np.float32)
+            
+            # Intersection and Union for IoU
+            intersection = np.logical_and(pred_binary, gt_binary).sum()
+            union = np.logical_or(pred_binary, gt_binary).sum()
+            iou = intersection / (union + 1e-8)
+            
+            # Dice coefficient
+            dice = (2 * intersection) / (pred_binary.sum() + gt_binary.sum() + 1e-8)
+            
+            # Pixel accuracy
+            correct = (pred_binary == gt_binary).sum()
+            total = gt_binary.size
+            pixel_acc = correct / total
+            
+            # Precision and Recall
+            tp = np.logical_and(pred_binary == 1, gt_binary == 1).sum()
+            fp = np.logical_and(pred_binary == 1, gt_binary == 0).sum()
+            fn = np.logical_and(pred_binary == 0, gt_binary == 1).sum()
+            
+            precision = tp / (tp + fp + 1e-8)
+            recall = tp / (tp + fn + 1e-8)
+            f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
+            
+            # Log metrics
+            self.log("val/iou", iou, prog_bar=True, sync_dist=True)
+            self.log("val/dice", dice, prog_bar=True, sync_dist=True)
+            self.log("val/pixel_acc", pixel_acc, prog_bar=True, sync_dist=True)
+            self.log("val/precision", precision, sync_dist=True)
+            self.log("val/recall", recall, sync_dist=True)
+            self.log("val/f1", f1, sync_dist=True)
+            
+            # Print only on master process (rank 0)
+            if self.trainer.is_global_zero:
+                print(f"\n=== Validation Metrics ===")
+                print(f"IoU: {iou:.4f}")
+                print(f"Dice: {dice:.4f}")
+                print(f"Pixel Accuracy: {pixel_acc:.4f}")
+                print(f"Precision: {precision:.4f}")
+                print(f"Recall: {recall:.4f}")
+                print(f"F1 Score: {f1:.4f}")
+        
+        # Log image only on master process
+        if self.trainer.is_global_zero:
+            wandb_logger.log_image(key="masks", images=[np.clip(self.mask_pred, 0, 1)], caption=["probs"])
+
+        # Reset masks
+        self.mask_pred = np.zeros(self.hparams.pred_shape)
+        self.mask_count = np.zeros(self.hparams.pred_shape)
+        if hasattr(self, 'mask_gt'):
+            self.mask_gt = np.zeros(self.hparams.pred_shape)
+                
+    def configure_optimizers(self):
+        based_lr = CFG.lr
+        param_groups = [
+            {'params': self.backbone.parameters(), 'lr': based_lr, 'weight_decay': 5e-10},
+            {'params': self.decoder.parameters(), 'lr': based_lr, 'weight_decay': 5e-10},
+        ]
+           
+            
+        optimizer = AdamW(param_groups)
+        # # Scheduler for OneCycleLR
+        # steps_per_epoch = 143 * 4  # adjust as per your dataloader
+        # scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        #     optimizer,
+        #     max_lr=[group['lr'] for group in param_groups],  # pass per-group max_lr
+        #     pct_start=0.15,
+        #     steps_per_epoch=143,
+        #     epochs=25,
+        #     final_div_factor=1e2
+        # )
+
+        return [optimizer]#, [{'scheduler': scheduler, 'interval': 'step'}]
+
+    
+
+def scheduler_step(scheduler, avg_val_loss, epoch):
+    scheduler.step(epoch)
+
+torch.cuda.empty_cache()
+
+torch.set_float32_matmul_precision('high')
+
+for a in [0.6]:
+    for norm in [False]:
+        for smooth in [0.25]:
+            # for size in [1,2]:
+                for f in [['remaining5','rect5']]: 
+                    # CFG.valid_id = f[-1]
+                    # CFG.frags = f
+                    max = True
+        
+                    enc='resnet101'
+                    fragment_id = CFG.valid_id
+                    valid_mask_gt = cv2.imread(f"train_scrolls/{fragment_id}/{fragment_id}_inklabels.png", 0)
+
+                    if any(sub in fragment_id for sub in CFG.frags_ratio1):
+                        scale = 1 / CFG.ratio1
+                        new_w = int(valid_mask_gt.shape[1] * scale)
+                        new_h = int(valid_mask_gt.shape[0] * scale)
+                        valid_mask_gt = cv2.resize(valid_mask_gt, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+                    elif any(sub in fragment_id for sub in CFG.frags_ratio2):
+                        scale = 1 / CFG.ratio2
+                        new_w = int(valid_mask_gt.shape[1] * scale)
+                        new_h = int(valid_mask_gt.shape[0] * scale)
+                        valid_mask_gt = cv2.resize(valid_mask_gt, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                        
+                    pad0 = (CFG.size - valid_mask_gt.shape[0] % CFG.size) % CFG.size
+                    pad1 = (CFG.size - valid_mask_gt.shape[1] % CFG.size) % CFG.size
+                    valid_mask_gt = np.pad(valid_mask_gt, [(0, pad0), (0, pad1)], constant_values=0)
+                    pred_shape=valid_mask_gt.shape
+                    
+                    train_images, train_masks, valid_images, valid_masks, valid_xyxys = get_train_valid_dataset()
+                    print(len(train_images))
+
+                    valid_xyxys = np.stack(valid_xyxys)
+                    
+                    train_dataset = CustomDataset(
+                        train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG)
+                    )
+                    
+                    valid_dataset = CustomDataset(
+                        valid_images, CFG,xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG))
+                    
+                    train_loader = DataLoader(train_dataset,
+                                                batch_size=CFG.train_batch_size,
+                                                shuffle=True,
+                                                num_workers=CFG.num_workers, pin_memory=True, drop_last=True,
+                                                )
+                    valid_loader = DataLoader(valid_dataset,
+                                                batch_size=CFG.valid_batch_size,
+                                                shuffle=False,
+                                                num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
+                    
+                    print('Trainloader lenth: ',len(train_loader))
+
+                    run_slug=f'RESNET_{CFG.frags}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}_norm={norm}_a={a}_max={max}_smooth={smooth}'
+
+                    wandb_logger = WandbLogger(project="vesivus",name=run_slug)
+                    model=RegressionPLModel(enc='resnet101',pred_shape=pred_shape,size=CFG.size,total_steps=len(train_loader), with_norm=norm, a = a,b = 1-a,max= max, smooth=smooth)
+                    
+                    # # DION
+                    # checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/RESNET_['remaining5', 'rect5']_valid=rect5_size=256_lr=2e-05_in_chans=30_norm=False_a=0.6_max=<built-in function max>_smooth=0.25resnet101-v6.ckpt", map_location="cpu", weights_only=False)
+                    # model.load_state_dict(checkpoint["state_dict"], strict=True)
+
+                    wandb_logger.watch(model, log="all", log_freq=50)
+                    trainer = pl.Trainer(
+                    max_epochs=25,
+                    accelerator="gpu",
+                    devices=-1,
+                    check_val_every_n_epoch=4,
+                    logger=wandb_logger,
+                    default_root_dir="./models",
+                    accumulate_grad_batches=1,
+                    precision='16-mixed',
+                    gradient_clip_val=1.0,
+                    gradient_clip_algorithm="norm",
+                    strategy='ddp_find_unused_parameters_true',
+                    callbacks=[ModelCheckpoint(filename=run_slug+f'_epoch='+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
+                                ],
+                    )
+                    
+                    # trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
+                    trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+
+                    wandb.finish()

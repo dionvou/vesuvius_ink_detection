@@ -33,7 +33,7 @@ class TimesformerDataset(Dataset):
         self.rotate = A.Compose([A.Rotate(8,p=1)])
         self.xyxys=xyxys
         self.aug = aug
-        self.scale_factor = 16
+        self.scale_factor = 4
         
         self.video_transform = T.Compose([
             T.ConvertImageDtype(torch.float32),  # scales to [0.0, 1.0]
@@ -152,122 +152,122 @@ class TimesformerDataset(Dataset):
             image = torch.stack([self.video_transform(f) for f in image]) # list of frames
             return image, label
 
-# HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH  GOOOOOOOOOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-class Patch3DTransformerSegmentation(nn.Module):
-    def __init__(self, num_classes=1, embed_dim=768, num_heads=8, depth=2, patch_output=4):
-        super().__init__()
-        self.patch_output = patch_output
-        self.num_classes = num_classes
+# # HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH  GOOOOOOOOOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
+# class Patch3DTransformerSegmentation(nn.Module):
+#     def __init__(self, num_classes=1, embed_dim=768, num_heads=8, depth=2, patch_output=4):
+#         super().__init__()
+#         self.patch_output = patch_output
+#         self.num_classes = num_classes
 
-        backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
+#         backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
 
-        # Modify first conv layer to accept 1 channel instead of 3
-        old_proj = backbone.patch_embed.proj
-        new_proj = nn.Conv3d(
-            in_channels=1,
-            out_channels=old_proj.out_channels,
-            kernel_size=old_proj.kernel_size,
-            stride=old_proj.stride,
-            padding=old_proj.padding,
-            bias=old_proj.bias is not None
-        )
-        # Initialize weights by summing across RGB channels
-        with torch.no_grad():
-            # old_proj.weight shape: [out_channels, 3, kT, kH, kW]
-            summed = old_proj.weight.sum(dim=1, keepdim=True)   # -> [out_channels, 1, kT, kH, kW]
-            new_proj.weight.copy_(summed)
+#         # Modify first conv layer to accept 1 channel instead of 3
+#         old_proj = backbone.patch_embed.proj
+#         new_proj = nn.Conv3d(
+#             in_channels=1,
+#             out_channels=old_proj.out_channels,
+#             kernel_size=old_proj.kernel_size,
+#             stride=old_proj.stride,
+#             padding=old_proj.padding,
+#             bias=old_proj.bias is not None
+#         )
+#         # Initialize weights by summing across RGB channels
+#         with torch.no_grad():
+#             # old_proj.weight shape: [out_channels, 3, kT, kH, kW]
+#             summed = old_proj.weight.sum(dim=1, keepdim=True)   # -> [out_channels, 1, kT, kH, kW]
+#             new_proj.weight.copy_(summed)
 
-            # If bias exists, copy it too
-            if old_proj.bias is not None:
-                new_proj.bias.copy_(old_proj.bias)
+#             # If bias exists, copy it too
+#             if old_proj.bias is not None:
+#                 new_proj.bias.copy_(old_proj.bias)
 
-        # Replace the old conv with the new one
-        backbone.patch_embed.proj = new_proj
+#         # Replace the old conv with the new one
+#         backbone.patch_embed.proj = new_proj
         
-        backbone = nn.Sequential(*list(backbone.children())[:-2]) 
+#         backbone = nn.Sequential(*list(backbone.children())[:-2]) 
         
-        ckpt_path = "pretraining/checkpoints/tiny_epoch=72.ckpt"
-        ckpt = torch.load(ckpt_path, map_location='cpu',weights_only=False)  # CPU first, move to GPU later if needed
+#         ckpt_path = "pretraining/checkpoints/tiny_epoch=72.ckpt"
+#         ckpt = torch.load(ckpt_path, map_location='cpu',weights_only=False)  # CPU first, move to GPU later if needed
 
-        if 'state_dict' in ckpt:
-            state_dict = ckpt['state_dict']
-        else:
-            state_dict = ckpt
-        # Filter only encoder weights (keys start with 'encoder.')
-        encoder_state_dict = {}
-        for k, v in state_dict.items():
-            if k.startswith('encoder.'):
-                # remove 'encoder.' prefix to match backbone keys
-                encoder_state_dict[k.replace('encoder.', '')] = v
+#         if 'state_dict' in ckpt:
+#             state_dict = ckpt['state_dict']
+#         else:
+#             state_dict = ckpt
+#         # Filter only encoder weights (keys start with 'encoder.')
+#         encoder_state_dict = {}
+#         for k, v in state_dict.items():
+#             if k.startswith('encoder.'):
+#                 # remove 'encoder.' prefix to match backbone keys
+#                 encoder_state_dict[k.replace('encoder.', '')] = v
 
-        # missing, unexpected =  backbone.load_state_dict(encoder_state_dict, strict=False)
-        # print("Missing keys:", missing)
-        # print("Unexpected keys:", unexpected)
-        self.backbone = backbone
-        # # Freeze the backbone
-        # for param in self.backbone.parameters():
-        #     param.requires_grad = False
+#         # missing, unexpected =  backbone.load_state_dict(encoder_state_dict, strict=False)
+#         # print("Missing keys:", missing)
+#         # print("Unexpected keys:", unexpected)
+#         self.backbone = backbone
+#         # # Freeze the backbone
+#         # for param in self.backbone.parameters():
+#         #     param.requires_grad = False
         
 
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=embed_dim,
-            nhead=num_heads,
-            dim_feedforward=embed_dim,
-            dropout=0.2,
-            activation="gelu",
-            batch_first=True 
-        )
-        self.embed_dim = embed_dim
+#         encoder_layer = nn.TransformerEncoderLayer(
+#             d_model=embed_dim,
+#             nhead=num_heads,
+#             dim_feedforward=embed_dim,
+#             dropout=0.2,
+#             activation="gelu",
+#             batch_first=True 
+#         )
+#         self.embed_dim = embed_dim
 
-        self.decoder = nn.TransformerEncoder(encoder_layer, num_layers=depth)
+#         self.decoder = nn.TransformerEncoder(encoder_layer, num_layers=depth)
 
-        self.classifier = nn.Sequential(
-            nn.Linear(embed_dim, (patch_output ** 2))
-        )
+#         self.classifier = nn.Sequential(
+#             nn.Linear(embed_dim, (patch_output ** 2))
+#         )
 
-    def forward(self, x):
-        B, C, T, H, W = x.shape
-        # print(x.shape)
-        feats = self.backbone(x)  # (B, T', H', W',embed_dim)
+#     def forward(self, x):
+#         B, C, T, H, W = x.shape
+#         # print(x.shape)
+#         feats = self.backbone(x)  # (B, T', H', W',embed_dim)
 
-        # Temporal pooling
-        feats = feats.max(dim=1)[0]# (B, 1, Hf, Wf, embed_dim,)
+#         # Temporal pooling
+#         feats = feats.max(dim=1)[0]# (B, 1, Hf, Wf, embed_dim,)
         
-        B, Hf, Wf, D = feats.shape
+#         B, Hf, Wf, D = feats.shape
 
-        # Move embed_dim to dim 1 and flatten patches
-        patch_tokens = feats.permute(0, 3, 1, 2).contiguous()  # (B, 768, 8, 7, 7)
-        patch_tokens = patch_tokens.view(B, Hf*Wf, -1)        # (B, 768, 8*7*7=392)
+#         # Move embed_dim to dim 1 and flatten patches
+#         patch_tokens = feats.permute(0, 3, 1, 2).contiguous()  # (B, 768, 8, 7, 7)
+#         patch_tokens = patch_tokens.view(B, Hf*Wf, -1)        # (B, 768, 8*7*7=392)
        
-        # print(patch_tokens.shape)
-        transformed_tokens = self.decoder(patch_tokens) 
-        logits = self.classifier(transformed_tokens)
-        logits = logits.permute(0, 2, 1).view(B, self.patch_output**2, Hf, Wf)  # (B, patch_output^2, Hf, Wf)
+#         # print(patch_tokens.shape)
+#         transformed_tokens = self.decoder(patch_tokens) 
+#         logits = self.classifier(transformed_tokens)
+#         logits = logits.permute(0, 2, 1).view(B, self.patch_output**2, Hf, Wf)  # (B, patch_output^2, Hf, Wf)
         
-        # logits = self.head(transformed_tokens)   # (B, num_classes, Hf, Wf)
-        logits = F.pixel_shuffle(logits, upscale_factor=self.patch_output) 
-        return logits
+#         # logits = self.head(transformed_tokens)   # (B, num_classes, Hf, Wf)
+#         logits = F.pixel_shuffle(logits, upscale_factor=self.patch_output) 
+#         return logits
     
-class SwinModel(pl.LightningModule):
-    def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
-        super(SwinModel, self).__init__()
+# class SwinModel(pl.LightningModule):
+#     def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
+#         super(SwinModel, self).__init__()
 
-        self.save_hyperparameters()
-        self.mask_pred = np.zeros(self.hparams.pred_shape)
-        self.mask_count = np.zeros(self.hparams.pred_shape)
-        self.IGNORE_INDEX = 127
+#         self.save_hyperparameters()
+#         self.mask_pred = np.zeros(self.hparams.pred_shape)
+#         self.mask_count = np.zeros(self.hparams.pred_shape)
+#         self.IGNORE_INDEX = 127
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.15,ignore_index=self.IGNORE_INDEX)
-        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
+#         self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.15,ignore_index=self.IGNORE_INDEX)
+#         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
 
-        self.loss_func= lambda x,y: 0.6 * self.loss_func1(x,y) +0.4*self.loss_func2(x,y)
-        self.backbone = Patch3DTransformerSegmentation(num_classes=1, patch_output=4)
+#         self.loss_func= lambda x,y: 0.6 * self.loss_func1(x,y) +0.4*self.loss_func2(x,y)
+#         self.backbone = Patch3DTransformerSegmentation(num_classes=1, patch_output=4)
     
-    def forward(self, x):
+#     def forward(self, x):
 
-        x = x.permute(0,2,1,3,4)
-        output = self.backbone(x)  # runs backbone, sets self.feature
-        return output
+#         x = x.permute(0,2,1,3,4)
+#         output = self.backbone(x)  # runs backbone, sets self.feature
+#         return output
 
 # # class Swin3DEncoder(nn.Module):
 # #     def __init__(self,pretrained_ckpt='pretraining/checkpoints/64_tiny_16_epoch=16.ckpt'):
@@ -372,183 +372,183 @@ class SwinModel(pl.LightningModule):
 
 
 
-# class Swin3DEncoder(nn.Module):
-#     def __init__(self, pretrained_ckpt='pretraining/checkpoints/64_tiny_16_epoch=17.ckpt', in_chans=1):
-#         super().__init__()
-#         # Load Swin3D
-#         self.backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
+class Swin3DEncoder(nn.Module):
+    def __init__(self, pretrained_ckpt='pretraining/checkpoints/64_tiny_16_epoch=17.ckpt', in_chans=1):
+        super().__init__()
+        # Load Swin3D
+        self.backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
 
-#         # --- patch_embed adaptation for 1 channel ---
-#         old_conv = self.backbone.patch_embed.proj
-#         weight = old_conv.weight.sum(dim=1, keepdim=True)  # [128, 1, 2, 4, 4]
-#         bias = old_conv.bias
+        # --- patch_embed adaptation for 1 channel ---
+        old_conv = self.backbone.patch_embed.proj
+        weight = old_conv.weight.sum(dim=1, keepdim=True)  # [128, 1, 2, 4, 4]
+        bias = old_conv.bias
 
-#         self.backbone.patch_embed.proj = nn.Conv3d(
-#             in_channels=in_chans,
-#             out_channels=old_conv.out_channels,
-#             kernel_size=old_conv.kernel_size,
-#             stride=old_conv.stride,
-#             bias=True
-#         )
-#         self.backbone.patch_embed.proj.weight = nn.Parameter(weight)
-#         self.backbone.patch_embed.proj.bias = nn.Parameter(bias.clone())
+        self.backbone.patch_embed.proj = nn.Conv3d(
+            in_channels=in_chans,
+            out_channels=old_conv.out_channels,
+            kernel_size=old_conv.kernel_size,
+            stride=old_conv.stride,
+            bias=True
+        )
+        self.backbone.patch_embed.proj.weight = nn.Parameter(weight)
+        self.backbone.patch_embed.proj.bias = nn.Parameter(bias.clone())
 
-#         # remove classifier head, keep norm
-#         self.backbone.head = nn.Identity()
+        # remove classifier head, keep norm
+        self.backbone.head = nn.Identity()
 
-#         # pretrained_ckpt = 'pretraining/checkpoints/tiny_epoch=71.ckpt'
-#         # # optionally load ckpt
-#         # if pretrained_ckpt:
-#         #     ckpt = torch.load(pretrained_ckpt, map_location='cpu',weights_only=False)
-#         #     ckpt_state_dict = ckpt['state_dict']  # your loaded checkpoint
-#         #     model_state_dict = self.backbone.state_dict()
+        # pretrained_ckpt = 'pretraining/checkpoints/tiny_epoch=71.ckpt'
+        # # optionally load ckpt
+        # if pretrained_ckpt:
+        #     ckpt = torch.load(pretrained_ckpt, map_location='cpu',weights_only=False)
+        #     ckpt_state_dict = ckpt['state_dict']  # your loaded checkpoint
+        #     model_state_dict = self.backbone.state_dict()
 
-#         #     new_state_dict = {}
-#         #     used_ckpt_keys = set()  # keep track of keys already used
+        #     new_state_dict = {}
+        #     used_ckpt_keys = set()  # keep track of keys already used
 
 
-#         #     for k_model in model_state_dict.keys():
-#         #         # Skip decoder stuff
-#         #         if any(x in k_model for x in ['decoder_pos_embed', 'mask_token', 'decoder']):
-#         #             continue
-#         #         print(k_model)
-#         #         # Find corresponding key in checkpoint
-#         #         if k_model in ckpt_state_dict:
-#         #             new_state_dict[k_model] = ckpt_state_dict[k_model]
-#         #         else:
-#         #             # Fallback: find first unused key with matching shape
-#         #             for k_ckpt, v_ckpt in ckpt_state_dict.items():
-#         #                 if k_ckpt in used_ckpt_keys:
-#         #                     continue  # skip already used keys
-#         #                 if v_ckpt.shape == model_state_dict[k_model].shape:
-#         #                     new_state_dict[k_model] = v_ckpt
-#         #                     used_ckpt_keys.add(k_ckpt)
-#         #                     print(f"Fallback match: {k_model} <- {k_ckpt}")
-#         #                     break
+        #     for k_model in model_state_dict.keys():
+        #         # Skip decoder stuff
+        #         if any(x in k_model for x in ['decoder_pos_embed', 'mask_token', 'decoder']):
+        #             continue
+        #         print(k_model)
+        #         # Find corresponding key in checkpoint
+        #         if k_model in ckpt_state_dict:
+        #             new_state_dict[k_model] = ckpt_state_dict[k_model]
+        #         else:
+        #             # Fallback: find first unused key with matching shape
+        #             for k_ckpt, v_ckpt in ckpt_state_dict.items():
+        #                 if k_ckpt in used_ckpt_keys:
+        #                     continue  # skip already used keys
+        #                 if v_ckpt.shape == model_state_dict[k_model].shape:
+        #                     new_state_dict[k_model] = v_ckpt
+        #                     used_ckpt_keys.add(k_ckpt)
+        #                     print(f"Fallback match: {k_model} <- {k_ckpt}")
+        #                     break
                             
-#         #     # Load into model
-#         #     msg = self.backbone.load_state_dict(new_state_dict, strict=False)
-#         #     print("Loaded:", msg)
+        #     # Load into model
+        #     msg = self.backbone.load_state_dict(new_state_dict, strict=False)
+        #     print("Loaded:", msg)
 
-#     def forward(self, x):
-#         x = self.backbone.patch_embed(x)   # (B, T/2, H/4, W/4, 96)
-#         x = self.backbone.pos_drop(x)
+    def forward(self, x):
+        x = self.backbone.patch_embed(x)   # (B, T/2, H/4, W/4, 96)
+        x = self.backbone.pos_drop(x)
 
-#         skips = []
-#         # backbone.features = [stage0, PatchMerging, stage1, PatchMerging, stage2, PatchMerging, stage3]
-#         for i, block in enumerate(self.backbone.features):
-#             x = block(x)
-#             if isinstance(block, nn.Sequential):  # stage output
-#                 skips.append(x)
+        skips = []
+        # backbone.features = [stage0, PatchMerging, stage1, PatchMerging, stage2, PatchMerging, stage3]
+        for i, block in enumerate(self.backbone.features):
+            x = block(x)
+            if isinstance(block, nn.Sequential):  # stage output
+                skips.append(x)
 
-#         return skips  # [s1, s2, s3, s4]
+        return skips  # [s1, s2, s3, s4]
 
-# class UpBlock2D(nn.Module):
-#     def __init__(self, in_ch, out_ch):
-#         super().__init__()
-#         self.up = nn.ConvTranspose2d(in_ch, out_ch, kernel_size=2, stride=2)
-#         self.conv = nn.Sequential(
-#             nn.Conv2d(out_ch * 2, out_ch, kernel_size=3, padding=1),
-#             nn.BatchNorm2d(out_ch),
-#             nn.ReLU(inplace=True),
-#             nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1),
-#             nn.BatchNorm2d(out_ch),
-#             nn.ReLU(inplace=True),
-#         )
+class UpBlock2D(nn.Module):
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_ch, out_ch, kernel_size=2, stride=2)
+        self.conv = nn.Sequential(
+            nn.Conv2d(out_ch * 2, out_ch, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+        )
 
-#     def forward(self, x, skip):
-#         # squeeze away the temporal dim if present
-#         if x.dim() == 5:  # (B, C, 1, H, W)
-#             x = x.squeeze(2)
-#         if skip.dim() == 5:
-#             skip = skip.squeeze(2)
+    def forward(self, x, skip):
+        # squeeze away the temporal dim if present
+        if x.dim() == 5:  # (B, C, 1, H, W)
+            x = x.squeeze(2)
+        if skip.dim() == 5:
+            skip = skip.squeeze(2)
 
-#         x = self.up(x)
+        x = self.up(x)
 
-#         # pad if needed
-#         if x.shape[2:] != skip.shape[2:]:
-#             diff = [s - d for s, d in zip(skip.shape[2:], x.shape[2:])]
-#             x = nn.functional.pad(x, [0, diff[1], 0, diff[0]])
+        # pad if needed
+        if x.shape[2:] != skip.shape[2:]:
+            diff = [s - d for s, d in zip(skip.shape[2:], x.shape[2:])]
+            x = nn.functional.pad(x, [0, diff[1], 0, diff[0]])
 
-#         x = torch.cat([x, skip], dim=1)
-#         return self.conv(x)
+        x = torch.cat([x, skip], dim=1)
+        return self.conv(x)
     
-# class TransformerHead2D(nn.Module):
-#     def __init__(self, in_dim, num_heads=8, mlp_ratio=4.0, out_dim=1):
-#         super().__init__()
-#         self.norm1 = nn.LayerNorm(in_dim)
-#         self.attn = nn.MultiheadAttention(embed_dim=in_dim, num_heads=num_heads)
-#         self.norm2 = nn.LayerNorm(in_dim)
-#         self.mlp = nn.Sequential(
-#             nn.Linear(in_dim, int(in_dim * mlp_ratio)),
-#             nn.GELU(),
-#             nn.Linear(int(in_dim * mlp_ratio), in_dim)
-#         )
-#         self.final = nn.Linear(in_dim, out_dim)
+class TransformerHead2D(nn.Module):
+    def __init__(self, in_dim, num_heads=8, mlp_ratio=4.0, out_dim=1):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(in_dim)
+        self.attn = nn.MultiheadAttention(embed_dim=in_dim, num_heads=num_heads)
+        self.norm2 = nn.LayerNorm(in_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(in_dim, int(in_dim * mlp_ratio)),
+            nn.GELU(),
+            nn.Linear(int(in_dim * mlp_ratio), in_dim)
+        )
+        self.final = nn.Linear(in_dim, out_dim)
 
-#     def forward(self, x):
-#         # x: (B, C, H, W)
-#         B, C, H, W = x.shape
-#         x_seq = x.flatten(2).permute(2, 0, 1)       # (H*W, B, C)
-#         x_attn = self.attn(self.norm1(x_seq),
-#                            self.norm1(x_seq),
-#                            self.norm1(x_seq))[0]
-#         x_seq = x_seq + x_attn
-#         x_seq = x_seq + self.mlp(self.norm2(x_seq))
-#         x_seq = self.final(x_seq)                   # (H*W, B, out_dim)
-#         x = x_seq.permute(1, 2, 0).view(B, -1, H, W)
-#         return x
+    def forward(self, x):
+        # x: (B, C, H, W)
+        B, C, H, W = x.shape
+        x_seq = x.flatten(2).permute(2, 0, 1)       # (H*W, B, C)
+        x_attn = self.attn(self.norm1(x_seq),
+                           self.norm1(x_seq),
+                           self.norm1(x_seq))[0]
+        x_seq = x_seq + x_attn
+        x_seq = x_seq + self.mlp(self.norm2(x_seq))
+        x_seq = self.final(x_seq)                   # (H*W, B, out_dim)
+        x = x_seq.permute(1, 2, 0).view(B, -1, H, W)
+        return x
     
-# class SwinModel(pl.LightningModule):
-#     def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
-#         super(SwinModel, self).__init__()
+class SwinModel(pl.LightningModule):
+    def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
+        super(SwinModel, self).__init__()
 
-#         self.save_hyperparameters()
-#         self.mask_pred = np.zeros(self.hparams.pred_shape)
-#         self.mask_count = np.zeros(self.hparams.pred_shape)
-#         self.IGNORE_INDEX = 127
+        self.save_hyperparameters()
+        self.mask_pred = np.zeros(self.hparams.pred_shape)
+        self.mask_count = np.zeros(self.hparams.pred_shape)
+        self.IGNORE_INDEX = 127
 
-#         self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.15,ignore_index=self.IGNORE_INDEX)
-#         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.15,ignore_index=self.IGNORE_INDEX)
+        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
 
-#         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y) +0.5*self.loss_func2(x,y)
-#         self.backbone = Swin3DEncoder()
+        self.loss_func= lambda x,y: 0.7 * self.loss_func1(x,y) +0.3*self.loss_func2(x,y)
+        self.backbone = Swin3DEncoder()
+        self.normalization=nn.BatchNorm3d(num_features=1) 
 
-#         # Channels per stage (tiny config)
-#         self.enc_channels = [96, 192, 384, 768]
-#         # self.enc_channels = [128, 256, 512, 1024]
+        # Channels per stage (tiny config)
+        self.enc_channels = [96, 192, 384, 768]
 
-#         # Bottleneck conv to reshape final feature
-#         self.bottleneck = nn.Conv3d(self.enc_channels[-1], self.enc_channels[-1], kernel_size=1)
+        # Bottleneck conv to reshape final feature
+        self.bottleneck = nn.Conv3d(self.enc_channels[-1], self.enc_channels[-1], kernel_size=1)
 
-#         # Decoder (reverse order)
-#         self.up3 = UpBlock2D(self.enc_channels[-1], self.enc_channels[-2])
-#         self.up2 = UpBlock2D(self.enc_channels[-2], self.enc_channels[-3])
-#         self.up1 = UpBlock2D(self.enc_channels[-3], self.enc_channels[-4])
+        # Decoder (reverse order)
+        self.up3 = UpBlock2D(self.enc_channels[-1], self.enc_channels[-2])
+        self.up2 = UpBlock2D(self.enc_channels[-2], self.enc_channels[-3])
+        self.up1 = UpBlock2D(self.enc_channels[-3], self.enc_channels[-4])
 
-#         # Final segmentation head
-#         # self.head = nn.Conv2d(96, 1, kernel_size=1)
-#         self.head = TransformerHead2D(in_dim=96, num_heads=8, mlp_ratio=4.0, out_dim=1)
+        # Final segmentation head
+        self.head = TransformerHead2D(in_dim=96, num_heads=8, mlp_ratio=4.0, out_dim=1)
 
-#     def forward(self, x):
-#         x= x.permute(0,2,1,3,4)
-#         skips = self.backbone(x)   # list of [stage1, stage2, stage3, stage4]
-#         s1, s2, s3, s4 = skips
+    def forward(self, x):
+        x= x.permute(0,2,1,3,4)
+        x=self.normalization(x)
+        skips = self.backbone(x) 
+        s1, s2, s3, s4 = skips
 
-#         # Swin returns (B, T, H, W, C) → convert to (B, C, T, H, W)
-#         def permute_fmap(fmap):
-#             return fmap.permute(0, 4, 1, 2, 3).contiguous()
+        # Swin returns (B, T, H, W, C) → convert to (B, C, T, H, W)
+        def permute_fmap(fmap):
+            return fmap.permute(0, 4, 1, 2, 3).contiguous()
 
-#         feat_maps = map(permute_fmap, (s1, s2, s3, s4))
+        feat_maps = map(permute_fmap, (s1, s2, s3, s4))
 
-#         s1, s2, s3, s4 = [torch.max(f, dim=2, keepdim=True)[0] for f in feat_maps]
+        s1, s2, s3, s4 = [torch.max(f, dim=2, keepdim=True)[0] for f in feat_maps]
 
-#         x = self.up3(s4, s3)
-#         x = self.up2(x, s2)
-#         x = self.up1(x, s1)
-#         out = self.head(x)
+        x = self.up3(s4, s3)
+        x = self.up2(x, s2)
+        x = self.up1(x, s1)
+        out = self.head(x)
 
-#         return out
+        return out
 
 # # ---------------- Full UNet ---------------- #
 # class SwinUNet3D(nn.Module):
@@ -594,199 +594,199 @@ class SwinModel(pl.LightningModule):
 
 
 # GOOOOOOOOOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD
-class Patch3DTransformerSegmentation(nn.Module):
-    def __init__(self, num_classes=1, embed_dim=1024, num_heads=4, depth=2, patch_output=4):
-        super().__init__()
-        self.patch_output = patch_output
-        self.num_classes = num_classes
+# class Patch3DTransformerSegmentation(nn.Module):
+#     def __init__(self, num_classes=1, embed_dim=1024, num_heads=4, depth=2, patch_output=4):
+#         super().__init__()
+#         self.patch_output = patch_output
+#         self.num_classes = num_classes
         
-        # backbone = swin_transformer.swin3d_b(weights=None)
-        backbone = swin_transformer.swin3d_b(weights=None)
+#         # backbone = swin_transformer.swin3d_b(weights=None)
+#         backbone = swin_transformer.swin3d_b(weights=None)
 
 
-        # Modify first conv layer to accept 1 channel instead of 3
-        old_proj = backbone.patch_embed.proj
-        backbone.patch_embed.proj = nn.Conv3d(
-            in_channels=1,
-            out_channels=old_proj.out_channels,
-            kernel_size=old_proj.kernel_size,
-            stride=old_proj.stride,
-            padding=old_proj.padding,
-            bias=old_proj.bias is not None
-        )
+#         # Modify first conv layer to accept 1 channel instead of 3
+#         old_proj = backbone.patch_embed.proj
+#         backbone.patch_embed.proj = nn.Conv3d(
+#             in_channels=1,
+#             out_channels=old_proj.out_channels,
+#             kernel_size=old_proj.kernel_size,
+#             stride=old_proj.stride,
+#             padding=old_proj.padding,
+#             bias=old_proj.bias is not None
+#         )
         
-        backbone = nn.Sequential(*list(backbone.children())[:-3]) 
+#         backbone = nn.Sequential(*list(backbone.children())[:-3]) 
 
-        # Load checkpoint
-        ckpt_path = "pretraining/checkpoints/epochepoch=20.ckpt"
-        ckpt = torch.load(ckpt_path, map_location='cpu',weights_only=False)  # CPU first, move to GPU later if needed
+#         # Load checkpoint
+#         ckpt_path = "pretraining/checkpoints/epochepoch=20.ckpt"
+#         ckpt = torch.load(ckpt_path, map_location='cpu',weights_only=False)  # CPU first, move to GPU later if needed
 
-        # Check if it's a Lightning checkpoint
-        if 'state_dict' in ckpt:
-            state_dict = ckpt['state_dict']
-        else:
-            state_dict = ckpt
-                # # Filter only encoder weights (keys start with 'encoder.')
-        encoder_state_dict = {}
-        for k, v in state_dict.items():
-            if k.startswith('encoder.'):
-                # remove 'encoder.' prefix to match backbone keys
-                encoder_state_dict[k.replace('encoder.', '')] = v
-        # new_state_dict = {}
-        # # for k, v in encoder_state_dict.items():
-        # #     new_key = k.replace("blocks", "features").replace("patch_embed", "0")  # example
-        # #     new_state_dict[new_key] = v
-        missing, unexpected =  backbone.load_state_dict(encoder_state_dict, strict=False)
-        print("Missing keys:", missing)
-        print("Unexpected keys:", unexpected)
-        self.backbone = backbone
-        # Freeze the backbone
-        # for param in self.backbone.parameters():
-        #     param.requires_grad = False
+#         # Check if it's a Lightning checkpoint
+#         if 'state_dict' in ckpt:
+#             state_dict = ckpt['state_dict']
+#         else:
+#             state_dict = ckpt
+#                 # # Filter only encoder weights (keys start with 'encoder.')
+#         encoder_state_dict = {}
+#         for k, v in state_dict.items():
+#             if k.startswith('encoder.'):
+#                 # remove 'encoder.' prefix to match backbone keys
+#                 encoder_state_dict[k.replace('encoder.', '')] = v
+#         # new_state_dict = {}
+#         # # for k, v in encoder_state_dict.items():
+#         # #     new_key = k.replace("blocks", "features").replace("patch_embed", "0")  # example
+#         # #     new_state_dict[new_key] = v
+#         missing, unexpected =  backbone.load_state_dict(encoder_state_dict, strict=False)
+#         print("Missing keys:", missing)
+#         print("Unexpected keys:", unexpected)
+#         self.backbone = backbone
+#         # Freeze the backbone
+#         # for param in self.backbone.parameters():
+#         #     param.requires_grad = False
         
 
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=embed_dim,
-            nhead=num_heads,
-            dim_feedforward=embed_dim,
-            dropout=0.1,
-            activation="gelu",
-            batch_first=True  # (B, N, C)
-        )
-        self.embed_dim = embed_dim
-        self.pos_embedding = None  # will be initialized dynamically after seeing Hf, Wf
-        self.pos_embedding_x = None
-        self.decoder = nn.TransformerEncoder(encoder_layer, num_layers=depth)
+#         encoder_layer = nn.TransformerEncoderLayer(
+#             d_model=embed_dim,
+#             nhead=num_heads,
+#             dim_feedforward=embed_dim,
+#             dropout=0.1,
+#             activation="gelu",
+#             batch_first=True  # (B, N, C)
+#         )
+#         self.embed_dim = embed_dim
+#         self.pos_embedding = None  # will be initialized dynamically after seeing Hf, Wf
+#         self.pos_embedding_x = None
+#         self.decoder = nn.TransformerEncoder(encoder_layer, num_layers=depth)
 
-        # Classifier: per patch -> small 3D patch
-        self.classifier = nn.Linear(embed_dim, patch_output ** 2)
-        # self.proj = nn.Conv2d(embed_dim, 256, kernel_size=3, padding=1)  # learns spatial filters
-        self.head = nn.Sequential(
-            nn.Conv2d(embed_dim,self.patch_output**2, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(self.patch_output**2,self.patch_output**2, kernel_size=1),
-        )
+#         # Classifier: per patch -> small 3D patch
+#         self.classifier = nn.Linear(embed_dim, patch_output ** 2)
+#         # self.proj = nn.Conv2d(embed_dim, 256, kernel_size=3, padding=1)  # learns spatial filters
+#         self.head = nn.Sequential(
+#             nn.Conv2d(embed_dim,self.patch_output**2, kernel_size=3, padding=1),
+#             nn.ReLU(inplace=True),
+#             nn.Conv2d(self.patch_output**2,self.patch_output**2, kernel_size=1),
+#         )
 
 
-    def forward(self, x):
-        B, C, T, H, W = x.shape
-        feats = self.backbone(x)  # (B, T', H', W',embed_dim)
+#     def forward(self, x):
+#         B, C, T, H, W = x.shape
+#         feats = self.backbone(x)  # (B, T', H', W',embed_dim)
 
-        # Adaptive temporal pooling
-        feats = feats.mean(dim=1) # (B, 1, Hf, Wf, embed_dim,)
+#         # Adaptive temporal pooling
+#         feats = feats.mean(dim=1) # (B, 1, Hf, Wf, embed_dim,)
         
-        B, Hf, Wf, D = feats.shape
+#         B, Hf, Wf, D = feats.shape
 
-        # # Move embed_dim to dim 1 and flatten patches
-        patch_tokens = feats.permute(0, 3, 1, 2).contiguous()  # (B, 768, 8, 7, 7)
-        patch_tokens = patch_tokens.view(B, Hf*Wf, -1)        # (B, 768, 8*7*7=392)
-        # patch_tokens = patch_tokens.permute(1, 0, 2)               # (392, B, 768)
-        # if self.pos_embedding is None or self.pos_embedding.shape[1] != Hf*Wf:
-        #     self.pos_embedding = nn.Parameter(torch.zeros(1, Hf*Wf, self.embed_dim, device=x.device))
-        #     nn.init.trunc_normal_(self.pos_embedding, std=0.02)
+#         # # Move embed_dim to dim 1 and flatten patches
+#         patch_tokens = feats.permute(0, 3, 1, 2).contiguous()  # (B, 768, 8, 7, 7)
+#         patch_tokens = patch_tokens.view(B, Hf*Wf, -1)        # (B, 768, 8*7*7=392)
+#         # patch_tokens = patch_tokens.permute(1, 0, 2)               # (392, B, 768)
+#         # if self.pos_embedding is None or self.pos_embedding.shape[1] != Hf*Wf:
+#         #     self.pos_embedding = nn.Parameter(torch.zeros(1, Hf*Wf, self.embed_dim, device=x.device))
+#         #     nn.init.trunc_normal_(self.pos_embedding, std=0.02)
             
-        # Add positional embeddings
-        # patch_tokens = patch_tokens #+ self.pos_embedding  # (B, N, C)
-        # patch_tokens = self.input_proj(patch_tokens)  # (B, N, 16)
-        # Transformer
-        transformed_tokens = self.decoder(patch_tokens) 
-        transformed_tokens = transformed_tokens.permute(0, 2, 1).view(B, self.embed_dim, Hf, Wf)  # (B, C, Hf, Wf)
+#         # Add positional embeddings
+#         # patch_tokens = patch_tokens #+ self.pos_embedding  # (B, N, C)
+#         # patch_tokens = self.input_proj(patch_tokens)  # (B, N, 16)
+#         # Transformer
+#         transformed_tokens = self.decoder(patch_tokens) 
+#         transformed_tokens = transformed_tokens.permute(0, 2, 1).view(B, self.embed_dim, Hf, Wf)  # (B, C, Hf, Wf)
 
-        # if self.pos_embedding_x is None:
-        #     self.pos_embedding_x = nn.Parameter(torch.zeros(1,  self.embed_dim,  Hf, Wf, device=x.device))
-        #     nn.init.trunc_normal_(self.pos_embedding_x, std=0.02)
+#         # if self.pos_embedding_x is None:
+#         #     self.pos_embedding_x = nn.Parameter(torch.zeros(1,  self.embed_dim,  Hf, Wf, device=x.device))
+#         #     nn.init.trunc_normal_(self.pos_embedding_x, std=0.02)
             
-        # transformed_tokens = transformed_tokens + self.pos_embedding_x  # (B, C, Hf, Wf)
-        # print(transformed_tsokens.shape)
-        transformed_tokens = transformed_tokens.permute(0, 2, 3, 1).contiguous().view(B, Hf*Wf, -1)  # (B, N, C)
-        logits = self.classifier(transformed_tokens)
-        # logits = logits.permute(0, 2, 1).view(B, self.patch_output**2, Hf, Wf)  # (B, patch_output^2, Hf, Wf)
+#         # transformed_tokens = transformed_tokens + self.pos_embedding_x  # (B, C, Hf, Wf)
+#         # print(transformed_tsokens.shape)
+#         transformed_tokens = transformed_tokens.permute(0, 2, 3, 1).contiguous().view(B, Hf*Wf, -1)  # (B, N, C)
+#         logits = self.classifier(transformed_tokens)
+#         # logits = logits.permute(0, 2, 1).view(B, self.patch_output**2, Hf, Wf)  # (B, patch_output^2, Hf, Wf)
         
-        # # logits = self.head(transformed_tokens)   # (B, num_classes, Hf, Wf)
-        logits = F.pixel_shuffle(logits, upscale_factor=4) 
-        return logits
+#         # # logits = self.head(transformed_tokens)   # (B, num_classes, Hf, Wf)
+#         logits = F.pixel_shuffle(logits, upscale_factor=4) 
+#         return logits
     
-class SwinModel(pl.LightningModule):
-    def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
-        super(SwinModel, self).__init__()
+# class SwinModel(pl.LightningModule):
+#     def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
+#         super(SwinModel, self).__init__()
 
-        self.save_hyperparameters()
-        self.mask_pred = np.zeros(self.hparams.pred_shape)
-        self.mask_count = np.zeros(self.hparams.pred_shape)
-        self.IGNORE_INDEX = 127
+#         self.save_hyperparameters()
+#         self.mask_pred = np.zeros(self.hparams.pred_shape)
+#         self.mask_count = np.zeros(self.hparams.pred_shape)
+#         self.IGNORE_INDEX = 127
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
-        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.15,ignore_index=self.IGNORE_INDEX)
+#         self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
+#         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.15,ignore_index=self.IGNORE_INDEX)
 
-        self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
-        self.backbone = Patch3DTransformerSegmentation(num_classes=1, patch_output=4)
-        self.scale_factor = 8
+#         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
+#         self.backbone = Patch3DTransformerSegmentation(num_classes=1, patch_output=4)
+#         self.scale_factor = 8
     
-    def forward(self, x):
+#     def forward(self, x):
 
-        x = x.permute(0,2,1,3,4)
-        output = self.backbone(x) 
-        return output
-
-
-# GOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD  
-class SwinModel(pl.LightningModule):
-    def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
-        super(SwinModel, self).__init__()
-
-        self.save_hyperparameters()
-        self.mask_pred = np.zeros(self.hparams.pred_shape)
-        self.mask_count = np.zeros(self.hparams.pred_shape)
-        self.IGNORE_INDEX = 127
-
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
-        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
-
-        self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
-
-        backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
+#         x = x.permute(0,2,1,3,4)
+#         output = self.backbone(x) 
+#         return output
 
 
-        # Modify first conv layer to accept 1 channel instead of 3
-        old_proj = backbone.patch_embed.proj
-        new_proj = nn.Conv3d(
-            in_channels=1,
-            out_channels=old_proj.out_channels,
-            kernel_size=old_proj.kernel_size,
-            stride=old_proj.stride,
-            padding=old_proj.padding,
-            bias=old_proj.bias is not None
-        )
-        # Initialize weights by summing across RGB channels
-        with torch.no_grad():
-            # old_proj.weight shape: [out_channels, 3, kT, kH, kW]
-            summed = old_proj.weight.sum(dim=1, keepdim=True)  # -> [out_channels, 1, kT, kH, kW]
-            new_proj.weight.copy_(summed)
+# # GOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD  
+# class SwinModel(pl.LightningModule):
+#     def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
+#         super(SwinModel, self).__init__()
 
-            # If bias exists, copy it too
-            if old_proj.bias is not None:
-                new_proj.bias.copy_(old_proj.bias)
-            # embed_dim = out.shape[1]  # channel dimension
+#         self.save_hyperparameters()
+#         self.mask_pred = np.zeros(self.hparams.pred_shape)
+#         self.mask_count = np.zeros(self.hparams.pred_shape)
+#         self.IGNORE_INDEX = 127
+
+#         self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
+#         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
+
+#         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
+
+#         backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
 
 
-        # Replace the old conv with the new one
-        backbone.patch_embed.proj = new_proj
-        embed_dim = 768
-        self.backbone = backbone
-        self.backbone.head = nn.Identity()
+#         # Modify first conv layer to accept 1 channel instead of 3
+#         old_proj = backbone.patch_embed.proj
+#         new_proj = nn.Conv3d(
+#             in_channels=1,
+#             out_channels=old_proj.out_channels,
+#             kernel_size=old_proj.kernel_size,
+#             stride=old_proj.stride,
+#             padding=old_proj.padding,
+#             bias=old_proj.bias is not None
+#         )
+#         # Initialize weights by summing across RGB channels
+#         with torch.no_grad():
+#             # old_proj.weight shape: [out_channels, 3, kT, kH, kW]
+#             summed = old_proj.weight.sum(dim=1, keepdim=True)  # -> [out_channels, 1, kT, kH, kW]
+#             new_proj.weight.copy_(summed)
+
+#             # If bias exists, copy it too
+#             if old_proj.bias is not None:
+#                 new_proj.bias.copy_(old_proj.bias)
+#             # embed_dim = out.shape[1]  # channel dimension
 
 
-        self.classifier = nn.Sequential(
-                nn.Linear(embed_dim,(self.hparams.size//16)**2),
-        )
+#         # Replace the old conv with the new one
+#         backbone.patch_embed.proj = new_proj
+#         embed_dim = 768
+#         self.backbone = backbone
+#         self.backbone.head = nn.Identity()
+
+
+#         self.classifier = nn.Sequential(
+#                 nn.Linear(embed_dim,(self.hparams.size//16)**2),
+#         )
     
-    def forward(self, x):
+#     def forward(self, x):
 
-        x = x.permute(0,2,1,3,4)
-        preds = self.backbone(x)  # runs backbone, sets self.feature
-        preds = self.classifier(preds)
-        preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
-        return preds
+#         x = x.permute(0,2,1,3,4)
+#         preds = self.backbone(x)  # runs backbone, sets self.feature
+#         preds = self.classifier(preds)
+#         preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
+#         return preds
 
 
 # ## GOOOOOOOOOOOOOOOOOODDDDDDDDDDDDD
@@ -1396,7 +1396,7 @@ class SwinModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=16,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=4,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)

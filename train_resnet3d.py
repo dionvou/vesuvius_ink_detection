@@ -838,8 +838,8 @@ class CFG:
     exp_name = 'pretraining_all'
     
     # ============== model cfg =============
-    frags = ['20231210132040','s4']#'frag5','frag1']#,'20231215151901']#'frag1',
-    valid_id = '20231210132040'#'20240304141530'#'20231210132040',20240716140050
+    frags = ['rect5','s4']#'frag5','frag1']#,'20231215151901']#'frag1',
+    valid_id = 'rect5'#'20240304141530'#'20231210132040',20240716140050
     backbone='resnet3d'
     # ============== training cfg =============
     size = 256
@@ -854,7 +854,7 @@ class CFG:
     
     start_idx = 15
     in_chans = 30
-    valid_chans =24
+    valid_chans = 24
     
     epochs = 40 # 30
     lr = 2e-5
@@ -1080,7 +1080,6 @@ def get_train_valid_dataset():
     valid_xyxys = []
         
     for fragment_id in CFG.frags:
-        # CFG.frags_.append(fragment_id)    
         print('reading ',fragment_id)
         image, mask,fragment_mask = read_image_mask(fragment_id,CFG.start_idx,CFG.in_chans)
 
@@ -1096,29 +1095,24 @@ def get_train_valid_dataset():
                         x1=b+xi
                         y2=y1+CFG.size
                         x2=x1+CFG.size
-                        # if fragment_id =='s4':
-                        #     if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.95):
-                        #         for yi in range(0, CFG.tile_size, CFG.size):
-                        #             for xi in range(0, CFG.tile_size, CFG.size):
-                        #                 y1 = a + yi
-                        #                 x1 = b + xi
-                        #                 y2 = y1 + CFG.size
-                        #                 x2 = x1 + CFG.size
-                        #                 tile_mask = mask[y1:y2, x1:x2, None].copy()  # copy the patch
-                        #                 all_gray = np.all((tile_mask < 0.5))
-                        #                 if not all_gray:
-                        #                     # Set all pixels where mask==0 to IGNORE INDEX, keep 1s as is
-                        #                     # tile_mask[(tile_mask <1) & (tile_mask>0.01)] = 127 # mask
-                        #                     train_images.append(image[y1:y2, x1:x2])
-                        #                     train_masks.append(tile_mask)
-                        #                     windows_dict[(y1, y2, x1, x2)] = '1'
-                        #                     assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
+
                         if fragment_id=='frag5':
                             if (y1,y2,x1,x2) not in windows_dict:
                                 if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.1):
                                     if np.mean(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]) >= 0.5:
                                         train_images.append(image[y1:y2, x1:x2])
                                         train_masks.append(mask[y1:y2, x1:x2, None])
+                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
+                                        windows_dict[(y1,y2,x1,x2)]='1'
+                        elif fragment_id=='s4':
+                            if (y1,y2,x1,x2) not in windows_dict:
+                                if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.1):
+                                    if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]==0):
+                                        train_images.append(image[y1:y2, x1:x2])
+                                        tile_mask = mask[y1:y2, x1:x2]
+                                        tile_mask = cv2.GaussianBlur(tile_mask, (15,15), 0)  # simple soft smoothing
+                                        train_masks.append(tile_mask[..., None])
+                                        # train_masks.append(mask[y1:y2, x1:x2, None])
                                         assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
                                         windows_dict[(y1,y2,x1,x2)]='1'
                         elif fragment_id!=CFG.valid_id:
@@ -1306,6 +1300,8 @@ class RegressionPLModel(pl.LightningModule):
         self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth = self.hparams.smooth)
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=self.hparams.smooth)
         self.loss_func= lambda x,y: self.hparams.a * self.loss_func1(x,y) + self.hparams.b*self.loss_func2(x,y)
+        self.mask_gt = np.zeros(self.hparams.pred_shape)
+
 
         
         self.backbone = generate_model(model_depth=101, n_input_channels=1,forward_features=True,n_classes=1039)
@@ -1388,32 +1384,149 @@ class RegressionPLModel(pl.LightningModule):
 
         return {"loss": loss1}
 
+    # def validation_step(self, batch, batch_idx):
+    #     x,y,xyxys= batch
+    #     batch_size = x.size(0)
+    #     outputs = self(x)
+    #     # print(outputs.shape)
+    #     # print(y.shape)
+    #     loss1 = self.loss_func(outputs, y)
+    #     y_preds = torch.sigmoid(outputs).to('cpu')
+    #     for i, (x1, y1, x2, y2) in enumerate(xyxys):
+    #         pred_patch = F.interpolate(y_preds[i].unsqueeze(0).float(),size=(self.hparams.size, self.hparams.size),mode='bilinear').squeeze(0).squeeze(0).numpy()
+    #         self.mask_pred[y1:y2, x1:x2] += pred_patch
+    #         # self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=4,mode='bilinear').squeeze(0).squeeze(0).numpy()
+    #         self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
+
+    #     self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)        
+    #     return {"loss": loss1}
+
+    # def on_validation_epoch_end(self):
+    #     self.mask_pred = np.divide(self.mask_pred, self.mask_count, out=np.zeros_like(self.mask_pred), where=self.mask_count!=0)
+       
+    #     wandb_logger.log_image(key="masks", images=[np.clip(self.mask_pred,0,1)], caption=["probs"])
+
+    #     #reset mask
+    #     self.mask_pred = np.zeros(self.hparams.pred_shape)
+    #     self.mask_count = np.zeros(self.hparams.pred_shape)
+    
+
+    # def validation_step(self, batch, batch_idx):
+    #     x, y, xyxys = batch
+    #     batch_size = x.size(0)
+    #     outputs = self(x)
+        
+    #     loss1 = self.loss_func(outputs, y)
+    #     y_preds = torch.sigmoid(outputs).to('cpu')
+        
+    #     for i, (x1, y1, x2, y2) in enumerate(xyxys):
+    #         pred_patch = F.interpolate(
+    #             y_preds[i].unsqueeze(0).float(),
+    #             size=(self.hparams.size, self.hparams.size),
+    #             mode='bilinear'
+    #         ).squeeze(0).squeeze(0).numpy()
+    #         self.mask_pred[y1:y2, x1:x2] += pred_patch
+    #         self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
+
+    #     self.log("val/total_loss", loss1.item(), on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)        
+    #     return {"loss": loss1}
     def validation_step(self, batch, batch_idx):
-        x,y,xyxys= batch
+        x, y, xyxys = batch
         batch_size = x.size(0)
         outputs = self(x)
-        # print(outputs.shape)
-        # print(y.shape)
+        
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
+        y_cpu = y.to('cpu')  # Move ground truth to CPU
+        
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            pred_patch = F.interpolate(y_preds[i].unsqueeze(0).float(),size=(self.hparams.size, self.hparams.size),mode='bilinear').squeeze(0).squeeze(0).numpy()
+            # Prediction
+            pred_patch = F.interpolate(
+                y_preds[i].unsqueeze(0).float(),
+                size=(self.hparams.size, self.hparams.size),
+                mode='bilinear'
+            ).squeeze(0).squeeze(0).numpy()
             self.mask_pred[y1:y2, x1:x2] += pred_patch
-            # self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=4,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            
+            # Ground truth
+            gt_patch = F.interpolate(
+                y_cpu[i].unsqueeze(0).float(),
+                size=(self.hparams.size, self.hparams.size),
+                mode='bilinear'
+            ).squeeze(0).squeeze(0).numpy()
+            self.mask_gt[y1:y2, x1:x2] = gt_patch  # Use = not += for ground truth
+            
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
-        self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True,sync_dist=True)        
+        self.log("val/total_loss", loss1.item(), on_step=True, on_epoch=True, prog_bar=True, sync_dist=True)        
         return {"loss": loss1}
 
     def on_validation_epoch_end(self):
-        self.mask_pred = np.divide(self.mask_pred, self.mask_count, out=np.zeros_like(self.mask_pred), where=self.mask_count!=0)
-       
-        wandb_logger.log_image(key="masks", images=[np.clip(self.mask_pred,0,1)], caption=["probs"])
+        # Average overlapping predictions
+        self.mask_pred = np.divide(
+            self.mask_pred, 
+            self.mask_count, 
+            out=np.zeros_like(self.mask_pred), 
+            where=self.mask_count != 0
+        )
+        
+        # Get ground truth mask
+        pred_binary = (self.mask_pred > 0.5).astype(np.float32)
+        
+        # Calculate metrics
+        if hasattr(self, 'mask_gt'):
+            gt_binary = self.mask_gt.astype(np.float32)
+            
+            # Intersection and Union for IoU
+            intersection = np.logical_and(pred_binary, gt_binary).sum()
+            union = np.logical_or(pred_binary, gt_binary).sum()
+            iou = intersection / (union + 1e-8)
+            
+            # Dice coefficient
+            dice = (2 * intersection) / (pred_binary.sum() + gt_binary.sum() + 1e-8)
+            
+            # Pixel accuracy
+            correct = (pred_binary == gt_binary).sum()
+            total = gt_binary.size
+            pixel_acc = correct / total
+            
+            # Precision and Recall
+            tp = np.logical_and(pred_binary == 1, gt_binary == 1).sum()
+            fp = np.logical_and(pred_binary == 1, gt_binary == 0).sum()
+            fn = np.logical_and(pred_binary == 0, gt_binary == 1).sum()
+            
+            precision = tp / (tp + fp + 1e-8)
+            recall = tp / (tp + fn + 1e-8)
+            f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
+            
+            # Log metrics
+            self.log("val/iou", iou, prog_bar=True, sync_dist=True)
+            self.log("val/dice", dice, prog_bar=True, sync_dist=True)
+            self.log("val/pixel_acc", pixel_acc, prog_bar=True, sync_dist=True)
+            self.log("val/precision", precision, sync_dist=True)
+            self.log("val/recall", recall, sync_dist=True)
+            self.log("val/f1", f1, sync_dist=True)
+            
+            # Print only on master process (rank 0)
+            if self.trainer.is_global_zero:
+                print(f"\n=== Validation Metrics ===")
+                print(f"IoU: {iou:.4f}")
+                print(f"Dice: {dice:.4f}")
+                print(f"Pixel Accuracy: {pixel_acc:.4f}")
+                print(f"Precision: {precision:.4f}")
+                print(f"Recall: {recall:.4f}")
+                print(f"F1 Score: {f1:.4f}")
+        
+        # Log image only on master process
+        if self.trainer.is_global_zero:
+            wandb_logger.log_image(key="masks", images=[np.clip(self.mask_pred, 0, 1)], caption=["probs"])
 
-        #reset mask
+        # Reset masks
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
-    
+        if hasattr(self, 'mask_gt'):
+            self.mask_gt = np.zeros(self.hparams.pred_shape)
+                
     def configure_optimizers(self):
         based_lr = CFG.lr
         param_groups = [
@@ -1462,76 +1575,76 @@ torch.set_float32_matmul_precision('high')
 
 fragments=[CFG.valid_id]
 print('Fragments: ', fragments) 
-for a in [0.5,0.5]:
-    for norm in [True,False]:
-        for smooth in [0.25,0.25]:
+for a in [0.6]:
+    for norm in [True]:
+        for smooth in [0.25]:
             # for size in [1,2]:
-                for f in [['remaining5','alpha'],['20231210132040','frag5']]: 
+                for f in [['remaining5','rect5']]: 
                     # max = True
-                    
-                    # CFG.frags = f
+                    CFG.valid_id = f[-1]
+                    CFG.frags = f
         
                     enc_i,enc,fold=0,'i3d',0
-                    for fid in fragments:
-                        CFG.valid_id=fid
-                        fragment_id = CFG.valid_id
+                    # for fid in fragments:
+                    # CFG.valid_id=fid
+                    fragment_id = CFG.valid_id
 
-                        pred_shape=valid_mask_gt.shape
+                    pred_shape=valid_mask_gt.shape
 
-                        train_images, train_masks, valid_images, valid_masks, valid_xyxys = get_train_valid_dataset()
-                        print(len(train_images))
+                    train_images, train_masks, valid_images, valid_masks, valid_xyxys = get_train_valid_dataset()
+                    print(len(train_images))
 
-                        valid_xyxys = np.stack(valid_xyxys)
-                        
-                        train_dataset = CustomDataset(
-                            train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG)
-                        )
-                        
-                        valid_dataset = CustomDataset(
-                            valid_images, CFG,xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG))
-                        
-                        train_loader = DataLoader(train_dataset,
-                                                    batch_size=CFG.train_batch_size,
-                                                    shuffle=True,
-                                                    num_workers=CFG.num_workers, pin_memory=True, drop_last=True,
-                                                    )
-                        valid_loader = DataLoader(valid_dataset,
-                                                    batch_size=CFG.valid_batch_size,
-                                                    shuffle=False,
-                                                    num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
-                        
-                        print('Trainloader lenth: ',len(train_loader))
+                    valid_xyxys = np.stack(valid_xyxys)
+                    
+                    train_dataset = CustomDataset(
+                        train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG)
+                    )
+                    
+                    valid_dataset = CustomDataset(
+                        valid_images, CFG,xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG))
+                    
+                    train_loader = DataLoader(train_dataset,
+                                                batch_size=CFG.train_batch_size,
+                                                shuffle=True,
+                                                num_workers=CFG.num_workers, pin_memory=True, drop_last=True,
+                                                )
+                    valid_loader = DataLoader(valid_dataset,
+                                                batch_size=CFG.valid_batch_size,
+                                                shuffle=False,
+                                                num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
+                    
+                    print('Trainloader lenth: ',len(train_loader))
 
 
-                        run_slug=f'RESNET_{CFG.frags}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}_norm={norm}_a={a}_max={max}_smooth={smooth}'
+                    run_slug=f'RESNET_{CFG.frags}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.in_chans}_norm={norm}_a={a}_max={max}_smooth={smooth}'
 
-                        wandb_logger = WandbLogger(project="vesivus",name=run_slug+f'{enc}')
-                        norm=fold==1
-                        model=RegressionPLModel(enc='resnet101',pred_shape=pred_shape,size=CFG.size,total_steps=len(train_loader), with_norm=norm, a = a,b = 1-a,max= max, smooth=smooth)
-                        
-                        # # DION
-                        # checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/f15_div2_l15-35_20231215151901_0_fr_i3depoch=7-v3.ckpt", map_location="cpu", weights_only=False)
-                        # model.load_state_dict(checkpoint["state_dict"], strict=True)
+                    wandb_logger = WandbLogger(project="vesivus",name=run_slug+f'{enc}')
+                    norm=fold==1
+                    model=RegressionPLModel(enc='resnet101',pred_shape=pred_shape,size=CFG.size,total_steps=len(train_loader), with_norm=norm, a = a,b = 1-a,max= max, smooth=smooth)
+                    
+                    # # DION
+                    # checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/f15_div2_l15-35_20231215151901_0_fr_i3depoch=7-v3.ckpt", map_location="cpu", weights_only=False)
+                    # model.load_state_dict(checkpoint["state_dict"], strict=True)
 
-                        # print('FOLD : ',fold)
-                        wandb_logger.watch(model, log="all", log_freq=50)
-                        trainer = pl.Trainer(
-                        max_epochs=25,
-                        accelerator="gpu",
-                        devices=-1,
-                        check_val_every_n_epoch=4,
-                        logger=wandb_logger,
-                        default_root_dir="./models",
-                        accumulate_grad_batches=1,
-                        precision='16-mixed',
-                        gradient_clip_val=1.0,
-                        gradient_clip_algorithm="norm",
-                        strategy='ddp_find_unused_parameters_true',
-                        callbacks=[ModelCheckpoint(filename=f'f15_div2_l15-35_{fid}_{fold}_fr_{enc}'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
-                                    ],
-                        )
-                        
-                        # trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
-                        trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+                    # print('FOLD : ',fold)
+                    wandb_logger.watch(model, log="all", log_freq=50)
+                    trainer = pl.Trainer(
+                    max_epochs=25,
+                    accelerator="gpu",
+                    devices=-1,
+                    check_val_every_n_epoch=4,
+                    logger=wandb_logger,
+                    default_root_dir="./models",
+                    accumulate_grad_batches=1,
+                    precision='16-mixed',
+                    gradient_clip_val=1.0,
+                    gradient_clip_algorithm="norm",
+                    strategy='ddp_find_unused_parameters_true',
+                    callbacks=[ModelCheckpoint(filename=f'f15_div2_l15-35_{fid}_{fold}_fr_{enc}'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
+                                ],
+                    )
+                    
+                    # trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
+                    trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
 
-                        wandb.finish()
+                    wandb.finish()

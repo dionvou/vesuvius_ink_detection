@@ -116,13 +116,12 @@ USER="registeredusers"
 PASS="only"
 
 # List your fragments
-fragments=("render_3.24um_20231107190228")
+fragments=("20231210132040")
 
 # Loop through each fragment
 for frag in "${fragments[@]}"; do
-    base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/20231210132040/${frag}/"
 
-    # base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/${frag}"
+    base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/${frag}"
     layers_url="${base_url}/layers/"
     
     # Create output directory
@@ -130,7 +129,7 @@ for frag in "${fragments[@]}"; do
     mkdir -p "$out_dir"
 
     # Download layers 15 to 45 (try both .tif and .png)
-    for i in $(seq -w 15 45); do
+    for i in $(seq -w 1 64); do
         found=false
         for ext in tif png jpg; do
             url="${layers_url}${i}.${ext}"

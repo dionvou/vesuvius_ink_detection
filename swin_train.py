@@ -60,8 +60,8 @@ class CFG:
     tile_size = 224
     stride = tile_size // 8
 
-    train_batch_size = 12# 32
-    valid_batch_size = 20
+    train_batch_size = 10# 32
+    valid_batch_size = 15
     lr = 5e-5
     # ============== model cfg =============
     scheduler = 'cosine'#'cosine', 'linear'
@@ -74,8 +74,8 @@ class CFG:
     ratio2 = 1
     
     # ============== fold =============
-    segments = ['20231215151901','frag5']
-    valid_id = '20231215151901'#20231210132040'20231215151901
+    segments = ['20231210132040','frag5']
+    valid_id = '20231210132040'#20231210132040'20231215151901
     norm = False
     aug = None
     # ============== fixed =============
@@ -100,7 +100,7 @@ class CFG:
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
         A.RandomBrightnessContrast(p=0.75),
-        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.3,p=0.75),
+        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.1,p=0.75),
         A.OneOf([
                 A.GaussNoise(var_limit=[10, 50]),
                 A.GaussianBlur(),
@@ -127,23 +127,20 @@ if wandb.run is not None:
     wandb.finish()
 t=0       
 utils.cfg_init(CFG)
-torch.set_float32_matmul_precision('medium')
+torch.set_float32_matmul_precision('high')
 for batch in [1,2]:
     for lr in [2e-5]:
         for norm in [True,False]:
             for aug in ['fourth']:
-                for frags in [['remaining5','rect5'],['20231210132040','frag5','frag1']]:
+                for frags in [['remaining5','20231215151901'],['20231210132040','frag5','frag1']]:
                     t=t+1
                     
                     CFG.norm = norm
                     CFG.lr = lr
                     CFG.aug = aug
-                    # CFG.start_idx = batch
                     
-                    # CFG.segments = frags
-                    # CFG.valid_id = frags[-1]
-                    # CFG.ratio1 = 2
-                    # CFG.ratio2 = batch
+                    CFG.segments = frags
+                    CFG.valid_id = frags[-1]
                 
                     fragment_id = CFG.valid_id
                     run_slug=f'_SWIN_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.valid_chans},norm={CFG.norm},fourth={CFG.aug}'
