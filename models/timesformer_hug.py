@@ -45,6 +45,7 @@ class TimesformerDataset(Dataset):
         self.xyxys=xyxys
         self.video_transform = T.Compose([
             T.ConvertImageDtype(torch.float32),
+            # T.Normalize(mean=[0.5], std=[0.5])
             T.Normalize(mean=[0.485, 0.456, 0.406],
                         std=[0.229, 0.224, 0.225]),
         ])
@@ -59,7 +60,7 @@ class TimesformerDataset(Dataset):
         """
         Custom channel augmentation that returns exactly 24 channels.
         """
-        # always select 8
+        # always select valid_chans
         cropping_num =  self.cfg.valid_chans 
 
         # pick crop indices
@@ -168,15 +169,9 @@ class TimesformerDataset(Dataset):
         else:
             image = self.images[idx]
             label = self.labels[idx]
-            # #3d rotate
-            # image=image.transpose(2,1,0)#(c,w,h)
-            # image=self.rotate(image=image)['image']
-            # image=image.transpose(0,2,1)#(c,h,w)
-            # image=self.rotate(image=image)['image']
-            # image=image.transpose(0,2,1)#(c,w,h)
-            # image=image.transpose(2,1,0)#(h,w,c)
 
             image=self.fourth_augment(image)
+            image = self.shuffle_d_axis(image)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)
@@ -199,17 +194,76 @@ class TimesfomerModel(pl.LightningModule):
         self.mask_count = np.zeros(self.hparams.pred_shape)
         self.IGNORE_INDEX = 127
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.15,ignore_index=self.IGNORE_INDEX)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
-        self.loss_func= lambda x,y: 0.7 * self.loss_func1(x,y)+0.3*self.loss_func2(x,y)
+        self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
         
         # hf_repo = "facebook/vjepa2-vitl-fpc64-256"
 
         # backbone = AutoModel.from_pretrained(hf_repo)
         
-        backbone = TimesformerModel.from_pretrained("facebook/timesformer-base-finetuned-k600")
+        encoder = TimesformerModel.from_pretrained("facebook/timesformer-hr-finetuned-k600")
+        # self.encoder = backbone
+        #         # --- Build encoder ---
+        # config = TimesformerConfig(
+        #     num_frames=16,
+        #     image_size=64,
+        #     patch_size=16,
+        #     num_channels=1,
+        #     attention_type="divided_space_time",
+        #     hidden_size=768,           # embedding dimension
+        #     num_attention_heads=8,
+        #     intermediate_size=768,
+        #     num_hidden_layers=6        # <--- THIS is the depth (# of transformer blocks)
+        # )
+        # self.encoder = TimesformerModel(config)
 
-        self.encoder = backbone
+        # # --- Optionally load pretrained weights ---
+        # pretrained_path= "pretraining/checkpoints/64_tf_8_epoch=30.ckpt"
+        # if pretrained_path is not None:
+        #     checkpoint = torch.load(pretrained_path, map_location="cpu", weights_only=False)
+        #     state_dict = checkpoint["state_dict"]
+
+        #     new_state_dict = {}
+        #     for k, v in state_dict.items():
+        #         # Keep only encoder weights
+        #         if k.startswith("encoder.encoder."):
+        #             new_state_dict[k.replace("encoder.encoder.", "encoder.")] = v
+        #         elif k.startswith("encoder."):
+        #             new_state_dict[k.replace("encoder.", "")] = v
+
+        #     result = self.encoder.load_state_dict(new_state_dict, strict=False)
+
+        #     print(f"✅ Loaded encoder weights from: {pretrained_path}")
+        #     print("Missing keys:", result.missing_keys)
+        #     print("Unexpected keys:", result.unexpected_keys)
+        # else:
+        #     print("⚠️ No pretrained weights loaded (training from scratch).")
+
+                
+        # config = TimesformerConfig(
+        #     num_frames=16,
+        #     image_size=64,
+        #     patch_size=8,
+        #     num_channels=1,
+        #     attention_type="divided_space_time",
+        #     hidden_size=768,           # embedding dimension
+        #     num_attention_heads=8,
+        #     intermediate_size=768,
+        #     num_hidden_layers=6        # <--- THIS is the depth (# of transformer blocks)
+        # )
+        # encoder = TimesformerModel(config)
+
+        # checkpoint = torch.load("pretraining/checkpoints/64_tf_16_fs_epoch=1-v2.ckpt", map_location="cpu", weights_only=False)
+    
+        # result = encoder.load_state_dict(checkpoint["state_dict"], strict=False)
+        self.encoder = encoder
+
+        # # Print result info
+        # print("✅ Encoder load successful!")
+        # print("Missing keys:", result.missing_keys)
+        # print("Unexpected keys:", result.unexpected_keys)
+  
 
         self.classifier = nn.Sequential(
             nn.Linear(768, (self.hparams.size//16)**2),  
@@ -365,7 +419,114 @@ class TimesfomerModel(pl.LightningModule):
 #     def forward(self, x):
 
 #         output = self.backbone(x)  # runs backbone, sets self.feature
-#         return output
+# #         return output
+# import torch
+# import torch.nn as nn
+# import pytorch_lightning as pl
+# import numpy as np
+# import segmentation_models_pytorch as smp
+# from transformers import TimesformerModel
+# from peft import LoraConfig, get_peft_model, TaskType
+
+
+# # --- helper wrapper to bypass PEFT’s NLP-style forward ---
+# class VisionPEFTModel(nn.Module):
+#     def __init__(self, model):
+#         super().__init__()
+#         self.model = model
+
+#     def forward(self, *args, **kwargs):
+#         # Directly call the vision transformer
+#         return self.model(*args, **kwargs)
+
+
+# class TimesfomerModel(pl.LightningModule):
+#     def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, with_norm=False):
+#         super().__init__()
+#         self.save_hyperparameters()
+
+#         self.mask_pred = np.zeros(self.hparams.pred_shape)
+#         self.mask_count = np.zeros(self.hparams.pred_shape)
+#         self.IGNORE_INDEX = 127
+
+#         # ---- losses ----
+#         self.loss_func1 = smp.losses.DiceLoss(mode="binary", ignore_index=self.IGNORE_INDEX)
+#         self.loss_func2 = smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25, ignore_index=self.IGNORE_INDEX)
+#         self.loss_func = lambda x, y: 0.5 * self.loss_func1(x, y) + 0.5 * self.loss_func2(x, y)
+
+#         # ---- pretrained encoder ----
+#         encoder = TimesformerModel.from_pretrained("facebook/timesformer-base-finetuned-k600")
+
+#         # ---- LoRA config ----
+#         lora_config = LoraConfig(
+#             r=8,
+#             lora_alpha=16,
+#             target_modules=[
+#                 "attention.attention.qkv",
+#                 "attention.output.dense",
+#                 "temporal_attention.attention.qkv",
+#                 "temporal_attention.output.dense",
+#             ],
+#             lora_dropout=0.1,
+#             bias="none",
+#             task_type=TaskType.FEATURE_EXTRACTION,
+#         )
+
+#         encoder = get_peft_model(encoder, lora_config)
+
+#         # --- fix: override PEFT forward so it accepts tensors instead of input_ids ---
+#         old_forward = encoder.forward
+
+#         def patched_forward(self, *args, **kwargs):
+#             # If PEFT passed input_ids, treat them as pixel_values or the first arg
+#             if "input_ids" in kwargs:
+#                 kwargs["pixel_values"] = kwargs.pop("input_ids")
+#             return old_forward(*args, **kwargs)
+
+#         import types
+#         encoder.forward = types.MethodType(patched_forward, encoder)
+
+#         # freeze non-LoRA params
+#         for n, p in encoder.named_parameters():
+#             if "lora" not in n:
+#                 p.requires_grad = False
+
+#         encoder.print_trainable_parameters()
+#         self.encoder = VisionPEFTModel(encoder)
+
+#         # ---- classification head ----
+#         self.classifier = nn.Linear(768, (self.hparams.size // 16) ** 2)
+
+#     # ---------------------------------------------------------
+#     def forward(self, x):
+#         # x: (B, T, C, H, W)
+#         outputs = self.encoder(x, output_hidden_states=True)
+#         last_hidden_state = outputs.last_hidden_state
+#         cls = last_hidden_state[:, 0, :]
+#         preds = self.classifier(cls)
+#         preds = preds.view(-1, 1, self.hparams.size // 16, self.hparams.size // 16)
+#         return preds
+
+    # ---------------------------------------------------------
+    # def training_step(self, batch, batch_idx):
+    #     x, y = batch
+    #     preds = self.forward(x)
+    #     loss = self.loss_func(preds, y)
+    #     self.log("train_loss", loss, prog_bar=True)
+    #     return loss
+
+    # def validation_step(self, batch, batch_idx):
+    #     x, y = batch
+    #     preds = self.forward(x)
+    #     loss = self.loss_func(preds, y)
+    #     self.log("val_loss", loss, prog_bar=True)
+    #     return loss
+
+    # def configure_optimizers(self):
+    #     trainable_params = [p for p in self.parameters() if p.requires_grad]
+    #     optimizer = torch.optim.AdamW(trainable_params, lr=self.hparams.lr, weight_decay=0.01)
+    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=10)
+    #     return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
    
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -394,22 +555,28 @@ class TimesfomerModel(pl.LightningModule):
         return {"loss": loss1}
     
     def configure_optimizers(self):
-        # # Separate the head parameters
-        # head_params = list(self.classifier.parameters())
-        # other_params = [p for n, p in self.named_parameters() if "classifier" not in n]
-        
-        # assert len(head_params) > 0, "No parameters found for 'head_params' group"
-        # assert len(other_params) > 0, "No parameters found for 'other_params' group"
-
-        # param_groups = [
-        #     {'params': other_params, 'lr': self.hparams.lr},
-        #     {'params': head_params, 'lr': self.hparams.lr},  # 10x LR for the head
-        # ]
-
-        optimizer = AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=0.01)
-    
-        scheduler = get_scheduler(optimizer,scheduler=self.hparams.scheduler)
+        trainable_params = [p for p in self.parameters() if p.requires_grad]
+        optimizer = AdamW(trainable_params, lr=self.hparams.lr, weight_decay=0.01)
+        scheduler = get_scheduler(optimizer, scheduler=self.hparams.scheduler)
         return [optimizer], [scheduler]
+    
+    # def configure_optimizers(self):
+        # # # Separate the head parameters
+        # # head_params = list(self.classifier.parameters())
+        # # other_params = [p for n, p in self.named_parameters() if "classifier" not in n]
+        
+        # # assert len(head_params) > 0, "No parameters found for 'head_params' group"
+        # # assert len(other_params) > 0, "No parameters found for 'other_params' group"
+
+        # # param_groups = [
+        # #     {'params': other_params, 'lr': self.hparams.lr},
+        # #     {'params': head_params, 'lr': self.hparams.lr},  # 10x LR for the head
+        # # ]
+
+        # optimizer = AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=0.01)
+    
+        # scheduler = get_scheduler(optimizer,scheduler=self.hparams.scheduler)
+        # return [optimizer], [scheduler]
         
     # def configure_optimizers(self):
     #     weight_decay = 0.001

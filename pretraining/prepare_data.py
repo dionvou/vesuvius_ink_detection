@@ -19,12 +19,12 @@ class CFG:
     current_dir = '../'
     segment_path = './pretraining_scrolls/'
     
-    start_idx = 20
-    in_chans = 20
+    start_idx = 15
+    in_chans = 30
     
-    size = 64
-    tile_size = 64
-    stride = tile_size // 2
+    size = 224
+    tile_size = 224
+    stride = tile_size // 4
     
     num_workers = 16
     
@@ -32,7 +32,7 @@ class CFG:
     frags_ratio1 = ['frag','re']
     frags_ratio2 = ['202','s4','left']
     ratio1 = 2
-    ratio2 = 1
+    ratio2 = 2
     
     # ============== fold =============
     segments = ['20240304141531'] 
@@ -153,37 +153,37 @@ def get_train_valid_dataset(CFG=None):
 
     return train_images,valid_images
 
-# base_dir = CFG.segment_path
-# # List only files directly in base_dir
-# folders_in_base = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
+base_dir = CFG.segment_path
+# List only files directly in base_dir
+folders_in_base = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
 
-# print("Files in base_dir:", folders_in_base)
+print("Files in base_dir:", folders_in_base)
 
-# # If you want to append to CFG.segments
+# If you want to append to CFG.segments
 # for file in folders_in_base:
 #     CFG.segments.append(file)
-base_dir = CFG.segment_path
+# base_dir = CFG.segment_path
 
-# Define the exact folders you want to include
-selected_folders = [
-    "20231111135340",
-    "20231122192640",
-    "20231210132040",
-    "20240304141530",
-    "20240304141531",
-    "20240304144030",
-    "20240304144031",
-    "20240304161940",
-    "20240304161941"
-]
+# # Define the exact folders you want to include
+# selected_folders = [
+#     "20231111135340",
+#     "20231122192640",
+#     "20231210132040",
+#     "20240304141530",
+#     "20240304141531",
+#     "20240304144030",
+#     "20240304144031",
+#     "20240304161940",
+#     "20240304161941"
+# ]
 
-# List only existing folders in base_dir that match the above list
-folders_in_base = [
-    d for d in os.listdir(base_dir)
-    if os.path.isdir(os.path.join(base_dir, d)) and d in selected_folders
-]
+# # List only existing folders in base_dir that match the above list
+# folders_in_base = [
+#     d for d in os.listdir(base_dir)
+#     if os.path.isdir(os.path.join(base_dir, d)) and d in selected_folders
+# ]
 
-print("Matching folders in base_dir:", folders_in_base)
+# print("Matching folders in base_dir:", folders_in_base)
 
 # Append only those folders to CFG.segments
 for folder in folders_in_base:
@@ -191,8 +191,8 @@ for folder in folders_in_base:
         
 def preprocess_and_save_tiles(CFG):
     # Save tiles inside segment_path/tiles/train and segment_path/tiles/valid
-    train_dir = os.path.join(CFG.segment_path, "64_tiles_s4", "train")
-    valid_dir = os.path.join(CFG.segment_path, "64_tiles_s4", "valid")
+    train_dir = os.path.join(CFG.segment_path, "224_tiles", "train")
+    valid_dir = os.path.join(CFG.segment_path, "224_tiles", "valid")
     os.makedirs(train_dir, exist_ok=True)
     os.makedirs(valid_dir, exist_ok=True)
 

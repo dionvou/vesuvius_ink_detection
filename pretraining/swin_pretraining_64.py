@@ -72,15 +72,15 @@ class CFG:
     current_dir = '../'
     segment_path = './pretraining_scrolls/'
     
-    start_idx = 20
-    in_chans = 20
-    valid_chans = 16 # chans used 
+    start_idx = 10
+    in_chans = 35
+    valid_chans = 30 # chans used 
     
     size = 64
     tile_size = 64
     stride = tile_size // 1
     
-    train_batch_size =  200
+    train_batch_size = 128
     valid_batch_size = 5
     lr = 1e-4
     # num_workers = 16
@@ -304,9 +304,9 @@ class MAEPretrain(pl.LightningModule):
         # backbone = swin_transformer.swin3d_b(weights='KINETICS400_IMAGENET22K_V1')
         backbone = swin_transformer.SwinTransformer3d(
             patch_size=[2, 4, 4],      # temporal=2, spatial=4x4 patches
-            embed_dim=96,              # base dimension
-            depths=[2, 2, 12, 2],       # Tiny config
-            num_heads=[3, 6, 12, 24],  # heads per stage
+            embed_dim=192,              # base dimension
+            depths=[2, 2, 12],       # Tiny config
+            num_heads=[3, 6, 12],  # heads per stage
             window_size=[8, 7, 7],     # attention window
             stochastic_depth_prob=0.1, # DropPath
         )
@@ -334,8 +334,8 @@ class MAEPretrain(pl.LightningModule):
         backbone.patch_embed.proj.bias = nn.Parameter(bias.clone())  # shape [128]
         self.encoder = nn.Sequential(*list(backbone.children())[:-2]) 
         
-        self.patch_size = 32
-        self.input_T = 16
+        self.patch_size = 16
+        self.input_T = 30
         self.input_H = 64
         self.input_W = 64
         self.tubelet_size = 2
@@ -361,7 +361,7 @@ class MAEPretrain(pl.LightningModule):
         self.decoder_transformer = nn.TransformerEncoder(decoder_layer, num_layers=decoder_layers)
         self.decoder_pred = nn.Sequential(
             nn.Linear(decoder_dim, self.patch_size**2*self.tubelet_size),
-            nn.Tanh()
+            # nn.Tanh()
         )
 
         # Mask token for masked patches in decoder
@@ -738,3 +738,578 @@ trainer = pl.Trainer(
     callbacks=[checkpoint_callback]
 )# trainer.validate(model, valid_loader)
 trainer.fit(model, train_loader, val_loader)
+
+# import os
+# import sys
+# import random
+# from pathlib import Path
+
+# import torch
+# import torch.nn as nn
+# import torch.nn.functional as F
+# import torchvision.transforms as T
+# import numpy as np
+# import albumentations as A
+# from albumentations.pytorch import ToTensorV2
+# import pytorch_lightning as pl
+# from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+# from pytorch_lightning.loggers import WandbLogger
+# from torch.utils.data import DataLoader, Dataset, random_split
+# from torch.optim import AdamW
+# from torchvision.models.video import swin_transformer
+# from warmup_scheduler import GradualWarmupScheduler
+# import matplotlib.pyplot as plt
+
+# # Increase PIL image size limit
+# from PIL import Image
+# Image.MAX_IMAGE_PIXELS = 933120000
+
+
+# class CFG:
+#     """Centralized configuration"""
+#     # Paths
+#     current_dir = '../'
+#     segment_path = './pretraining_scrolls/'
+    
+#     # Model architecture
+#     start_idx = 20
+#     in_chans = 20
+#     valid_chans = 16
+#     size = 64
+#     tile_size = 64
+#     stride = tile_size // 1
+    
+#     # Training hyperparameters
+#     train_batch_size = 200
+#     valid_batch_size = 5
+#     lr = 1e-4
+#     epochs = 200
+#     warmup_epochs = 5
+    
+#     # Masking strategy
+#     mask_ratio = 0.75
+#     masking_strategy = 'random'  # 'random', 'frame', or 'tube'
+    
+#     # Architecture
+#     embed_dim = 768
+#     decoder_dim = 512
+#     decoder_layers = 4
+    
+#     # Video dimensions
+#     input_frames = 16
+#     tubelet_size = 2
+#     patch_size = 32
+    
+#     # Optimizer
+#     weight_decay = 0.05
+#     max_grad_norm = 1.0
+    
+#     # Data
+#     val_split = 0.001
+#     num_workers = 16
+#     seed = 42
+    
+#     # Augmentation
+#     train_aug_list = [
+#         A.HorizontalFlip(p=0.5),
+#         A.VerticalFlip(p=0.5),
+#         A.ShiftScaleRotate(rotate_limit=360, shift_limit=0.15, p=0.75),
+#         ToTensorV2(transpose_mask=True),
+#     ]
+    
+#     valid_aug_list = [
+#         ToTensorV2(transpose_mask=True),
+#     ]
+
+
+# def set_seed(seed):
+#     """Set random seeds for reproducibility"""
+#     random.seed(seed)
+#     np.random.seed(seed)
+#     torch.manual_seed(seed)
+#     torch.cuda.manual_seed_all(seed)
+#     torch.backends.cudnn.deterministic = True
+#     torch.backends.cudnn.benchmark = False
+
+
+# def get_transforms(split, cfg):
+#     """Get augmentation transforms"""
+#     if split == 'train':
+#         return A.Compose(cfg.train_aug_list)
+#     return A.Compose(cfg.valid_aug_list)
+
+
+# class TileDataset(Dataset):
+#     """Dataset for loading tile data with channel augmentation"""
+    
+#     def __init__(self, base_path, splits=["train"], transform=None, cfg=None):
+#         self.cfg = cfg or CFG()
+#         self.tile_paths = []
+        
+#         for split in splits:
+#             split_path = Path(base_path) / "64_tiles_s4" / split
+#             self.tile_paths.extend([
+#                 str(p) for p in split_path.glob("*.npy")
+#             ])
+        
+#         self.transform = transform
+#         self.video_transform = T.Compose([
+#             T.ConvertImageDtype(torch.float32), 
+#             T.Normalize(mean=[0.5], std=[0.5])
+#         ])
+        
+#         print(f"Loaded {len(self.tile_paths)} tiles from {splits}")
+
+#     def __len__(self):
+#         return len(self.tile_paths)
+    
+#     def random_channel_crop(self, image):
+#         """Randomly crop consecutive channels"""
+#         cropping_num = self.cfg.valid_chans
+#         start_idx = random.randint(0, self.cfg.in_chans - cropping_num)
+#         crop_indices = np.arange(start_idx, start_idx + cropping_num)
+#         return image[..., crop_indices]
+
+#     def __getitem__(self, idx):
+#         # Load and augment channels
+#         image = np.load(self.tile_paths[idx])  # (H, W, C)
+#         image = self.random_channel_crop(image)
+        
+#         # Apply spatial augmentation
+#         if self.transform:
+#             data = self.transform(image=image)
+#             image = data['image'].unsqueeze(0)  # (1, C, H, W)
+        
+#         # Rearrange to video format: (T, C, H, W)
+#         image = image.permute(1, 0, 2, 3)
+        
+#         # Apply normalization per frame
+#         image = torch.stack([self.video_transform(f) for f in image])
+        
+#         return image
+
+
+# class MAEPretrain(pl.LightningModule):
+#     """Masked Autoencoder for video pretraining with Swin3D backbone"""
+    
+#     def __init__(self, cfg=None):
+#         super().__init__()
+#         self.cfg = cfg or CFG()
+#         self.save_hyperparameters()
+        
+#         # Initialize Swin3D backbone
+#         self.encoder = self._build_encoder()
+        
+#         # Patch and masking parameters
+#         self.patch_size = self.cfg.patch_size
+#         self.tubelet_size = self.cfg.tubelet_size
+#         self.mask_ratio = self.cfg.mask_ratio
+        
+#         # Calculate number of patches
+#         self.N = (self.cfg.input_frames // self.tubelet_size) * \
+#                  (self.cfg.size // self.patch_size) ** 2
+#         self.n_keep = int((1 - self.mask_ratio) * self.N)
+        
+#         print(f"Total patches: {self.N}, Keeping: {self.n_keep} ({self.n_keep/self.N:.1%})")
+        
+#         # Decoder components
+#         self.decoder_embed = nn.Linear(self.cfg.embed_dim, self.cfg.decoder_dim)
+#         self.decoder_pos_embed = nn.Parameter(
+#             torch.randn(1, self.N, self.cfg.decoder_dim) * 0.02
+#         )
+        
+#         decoder_layer = nn.TransformerEncoderLayer(
+#             d_model=self.cfg.decoder_dim,
+#             nhead=8,
+#             dim_feedforward=self.cfg.decoder_dim * 4,
+#             dropout=0.1,
+#             batch_first=True
+#         )
+#         self.decoder_transformer = nn.TransformerEncoder(
+#             decoder_layer,
+#             num_layers=self.cfg.decoder_layers
+#         )
+        
+#         # Prediction head
+#         patch_dim = self.patch_size ** 2 * self.tubelet_size
+#         self.decoder_pred = nn.Sequential(
+#             nn.Linear(self.cfg.decoder_dim, self.cfg.decoder_dim),
+#             nn.GELU(),
+#             nn.Linear(self.cfg.decoder_dim, patch_dim)
+#         )
+        
+#         # Learnable mask token
+#         self.mask_token = nn.Parameter(torch.zeros(1, 1, self.cfg.decoder_dim))
+#         nn.init.normal_(self.mask_token, std=0.02)
+        
+#         # Loss function
+#         self.criterion = nn.MSELoss()
+        
+#     def _build_encoder(self):
+#         """Build Swin3D encoder with adapted input channels"""
+#         backbone = swin_transformer.SwinTransformer3d(
+#             patch_size=[2, 4, 4],
+#             embed_dim=96,
+#             depths=[2, 2, 18],  # Swin3D-B configuration
+#             num_heads=[3, 6, 12],
+#             window_size=[8, 7, 7],
+#             stochastic_depth_prob=0.1,
+#         )
+        
+#         # Adapt first conv layer for single-channel input
+#         old_conv = backbone.patch_embed.proj
+#         weight = old_conv.weight  # (128, 3, 2, 4, 4)
+#         bias = old_conv.bias
+        
+#         # Average across RGB channels
+#         new_weight = weight.mean(dim=1, keepdim=True)
+        
+#         backbone.patch_embed.proj = nn.Conv3d(
+#             in_channels=1,
+#             out_channels=128,
+#             kernel_size=(2, 4, 4),
+#             stride=(2, 4, 4),
+#             bias=True
+#         )
+        
+#         with torch.no_grad():
+#             backbone.patch_embed.proj.weight.copy_(new_weight)
+#             backbone.patch_embed.proj.bias.copy_(bias)
+        
+#         # Remove classification head
+#         return nn.Sequential(*list(backbone.children())[:-2])
+    
+#     def patchify(self, x):
+#         """
+#         Convert video to patches
+#         Args:
+#             x: (B, T, C, H, W)
+#         Returns:
+#             patches: (B, N, patch_dim)
+#         """
+#         B, T, C, H, W = x.shape
+#         tubelet = self.tubelet_size
+#         ps = self.patch_size
+        
+#         # Rearrange to (B, C, T, H, W)
+#         x = x.permute(0, 2, 1, 3, 4)
+        
+#         # Unfold temporal and spatial dimensions
+#         x = x.unfold(2, tubelet, tubelet) \
+#              .unfold(3, ps, ps) \
+#              .unfold(4, ps, ps)
+        
+#         # Rearrange and flatten patches
+#         x = x.permute(0, 2, 3, 4, 5, 6, 7, 1).contiguous()
+#         B, T_p, H_p, W_p = x.shape[:4]
+#         x = x.reshape(B, T_p * H_p * W_p, C * tubelet * ps * ps)
+        
+#         return x
+    
+#     def unpatchify(self, x, patch_shape):
+#         """
+#         Reconstruct video from patches
+#         Args:
+#             x: (B, N, patch_dim)
+#             patch_shape: (pt, ph, pw)
+#         Returns:
+#             video: (B, C, T, H, W)
+#         """
+#         B, N, D = x.shape
+#         pt, ph, pw = patch_shape
+#         ps = self.patch_size
+#         tubelet = self.tubelet_size
+#         C = 1
+        
+#         x = x.view(B, pt, ph, pw, C, tubelet, ps, ps)
+#         x = x.permute(0, 4, 1, 5, 2, 6, 3, 7).contiguous()
+#         x = x.view(B, C, pt * tubelet, ph * ps, pw * ps)
+        
+#         return x
+    
+#     def random_masking(self, x):
+#         """Random patch masking"""
+#         B, N, D = x.shape
+#         n_keep = self.n_keep
+        
+#         ids_keep, ids_masked, ids_restore = [], [], []
+        
+#         for b in range(B):
+#             perm = torch.randperm(N, device=x.device)
+#             keep = perm[:n_keep]
+#             masked = perm[n_keep:]
+            
+#             restore = torch.empty_like(perm)
+#             restore[perm] = torch.arange(N, device=x.device)
+            
+#             ids_keep.append(keep)
+#             ids_masked.append(masked)
+#             ids_restore.append(restore)
+        
+#         ids_keep = torch.stack(ids_keep)
+#         ids_masked = torch.stack(ids_masked)
+#         ids_restore = torch.stack(ids_restore)
+        
+#         # Gather visible patches
+#         x_masked = torch.gather(
+#             x, 1, ids_keep.unsqueeze(-1).expand(-1, -1, D)
+#         )
+        
+#         return x_masked, ids_keep, ids_masked, ids_restore
+    
+#     def forward(self, x):
+#         """
+#         Forward pass
+#         Args:
+#             x: (B, T, C, H, W)
+#         Returns:
+#             recon: (B, T, C, H, W) reconstructed video
+#             x_masked_video: masked input to encoder
+#             ids_masked: indices of masked patches
+#             pred: predicted patches
+#             target: target patches
+#         """
+#         B, T, C, H, W = x.shape
+        
+#         # 1. Patchify
+#         x_patched = self.patchify(x)  # (B, N, D)
+#         N = x_patched.shape[1]
+        
+#         # 2. Mask patches
+#         x_masked, ids_keep, ids_masked, ids_restore = self.random_masking(x_patched)
+        
+#         # 3. Unpatchify visible patches for encoder
+#         n_keep = ids_keep.shape[1]
+#         pt = int(np.ceil(n_keep / (self.cfg.size // self.patch_size) ** 2))
+#         spatial_size = int(np.sqrt(n_keep / pt))
+        
+#         x_masked_video = self.unpatchify(
+#             x_masked, (pt, spatial_size, spatial_size)
+#         )
+        
+#         # 4. Encode
+#         features = self.encoder(x_masked_video)
+#         B, D, T_enc, H_enc, W_enc = features.shape
+#         tokens = features.permute(0, 2, 3, 4, 1).reshape(B, -1, D)
+        
+#         # 5. Decoder
+#         x_vis = self.decoder_embed(tokens)
+        
+#         # Add mask tokens
+#         n_masked = ids_masked.shape[1]
+#         mask_tokens = self.mask_token.expand(B, n_masked, -1)
+        
+#         # Concatenate and restore order
+#         x_full = torch.cat([x_vis, mask_tokens], dim=1)
+#         x_dec = torch.gather(
+#             x_full, 1, 
+#             ids_restore.unsqueeze(-1).expand(-1, -1, x_full.shape[2])
+#         )
+        
+#         # Add positional embedding
+#         x_dec = x_dec + self.decoder_pos_embed
+        
+#         # Decode
+#         x_dec = self.decoder_transformer(x_dec)
+#         pred = self.decoder_pred(x_dec)
+        
+#         # 6. Unpatchify predictions
+#         pt = self.cfg.input_frames // self.tubelet_size
+#         spatial = self.cfg.size // self.patch_size
+#         recon = self.unpatchify(pred, (pt, spatial, spatial))
+#         recon = recon.permute(0, 2, 1, 3, 4)  # (B, T, C, H, W)
+        
+#         return recon, x_masked_video, ids_masked, pred, x_patched
+    
+#     def training_step(self, batch, batch_idx):
+#         x = batch
+#         recon, _, ids_masked, pred, target = self(x)
+        
+#         # Compute loss only on masked patches
+#         B, N, D = pred.shape
+#         ids_masked_exp = ids_masked.unsqueeze(-1).expand(-1, -1, D)
+        
+#         pred_masked = torch.gather(pred, 1, ids_masked_exp)
+#         target_masked = torch.gather(target, 1, ids_masked_exp)
+        
+#         loss = self.criterion(pred_masked, target_masked)
+        
+#         self.log("train_loss", loss, prog_bar=True, sync_dist=True)
+#         self.log("lr", self.optimizers().param_groups[0]['lr'], prog_bar=True)
+        
+#         return loss
+    
+#     def validation_step(self, batch, batch_idx):
+#         x = batch
+#         recon, _, _, _, _ = self(x)
+#         loss = self.criterion(recon, x)
+        
+#         self.log('val_loss', loss, prog_bar=True, sync_dist=True)
+        
+#         # Store first batch for visualization
+#         if batch_idx == 0:
+#             self.val_batch_viz = (x, recon)
+        
+#         return loss
+    
+#     def on_validation_epoch_end(self):
+#         """Visualize reconstruction after validation"""
+#         if self.global_rank == 0 and hasattr(self, 'val_batch_viz'):
+#             x, recon = self.val_batch_viz
+#             self._save_reconstruction(x, recon)
+            
+#         if self.global_rank == 0:
+            
+#             # Get metrics
+#             val_loss = self.trainer.callback_metrics.get('val_loss', None)
+#             train_loss = self.trainer.callback_metrics.get('train_loss', None)
+            
+#             # Save to CSV
+#             import csv
+#             import os
+            
+#             log_path = "training_history.csv"
+#             file_exists = os.path.isfile(log_path)
+            
+#             with open(log_path, 'a', newline='') as f:
+#                 writer = csv.writer(f)
+#                 if not file_exists:
+#                     writer.writerow(['epoch','train_loss', 'val_loss'])
+                
+#                 train_loss_val = train_loss.item() if train_loss is not None else 'N/A'
+#                 val_loss_val = val_loss.item() if val_loss is not None else 'N/A'
+#                 writer.writerow([self.current_epoch,train_loss_val, val_loss_val])
+    
+#     def _save_reconstruction(self, original, reconstructed, num_frames=16):
+#         """Save reconstruction visualization"""
+#         orig = original[0].cpu().numpy()  # (T, C, H, W)
+#         recon = reconstructed[0].cpu().detach().numpy()
+        
+#         if orig.shape[1] == 1:
+#             orig = orig.squeeze(1)
+#             recon = recon.squeeze(1)
+        
+#         fig, axes = plt.subplots(2, num_frames, figsize=(3 * num_frames, 6))
+        
+#         for i in range(num_frames):
+#             axes[0, i].imshow(orig[i], cmap='gray', vmin=-1, vmax=1)
+#             axes[0, i].set_title(f"Original {i}")
+#             axes[0, i].axis('off')
+            
+#             axes[1, i].imshow(recon[i], cmap='gray', vmin=-1, vmax=1)
+#             axes[1, i].set_title(f"Reconstructed {i}")
+#             axes[1, i].axis('off')
+        
+#         save_dir = Path('./results')
+#         save_dir.mkdir(exist_ok=True)
+#         save_path = save_dir / f'reconstruction_epoch_{self.current_epoch}.png'
+#         plt.savefig(save_path, dpi=150, bbox_inches='tight')
+#         plt.close(fig)
+        
+#         print(f"Saved reconstruction to {save_path}")
+    
+#     def configure_optimizers(self):
+#         """Configure optimizer and learning rate scheduler"""
+#         optimizer = AdamW(
+#             self.parameters(),
+#             lr=self.cfg.lr,
+#             weight_decay=self.cfg.weight_decay,
+#             betas=(0.9, 0.95)
+#         )
+        
+#         # Cosine annealing with warmup
+#         cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+#             optimizer,
+#             T_max=self.cfg.epochs,
+#             eta_min=1e-6
+#         )
+        
+#         scheduler = GradualWarmupScheduler(
+#             optimizer,
+#             multiplier=1,
+#             total_epoch=self.cfg.warmup_epochs,
+#             after_scheduler=cosine_scheduler
+#         )
+        
+#         return [optimizer], [scheduler]
+
+
+# def main():
+#     """Main training function"""
+#     # Set seed for reproducibility
+#     set_seed(CFG.seed)
+    
+#     # Create datasets
+#     full_dataset = TileDataset(
+#         CFG.segment_path,
+#         splits=["train", "valid"],
+#         transform=get_transforms('train', CFG),
+#         cfg=CFG
+#     )
+    
+#     # Split into train/val
+#     val_size = int(CFG.val_split * len(full_dataset))
+#     train_size = len(full_dataset) - val_size
+#     train_dataset, val_dataset = random_split(
+#         full_dataset, [train_size, val_size]
+#     )
+    
+#     # Create dataloaders
+#     train_loader = DataLoader(
+#         train_dataset,
+#         batch_size=CFG.train_batch_size,
+#         shuffle=True,
+#         num_workers=CFG.num_workers,
+#         pin_memory=True,
+#         persistent_workers=True
+#     )
+    
+#     val_loader = DataLoader(
+#         val_dataset,
+#         batch_size=CFG.valid_batch_size,
+#         shuffle=False,
+#         num_workers=CFG.num_workers,
+#         pin_memory=True,
+#         persistent_workers=True
+#     )
+    
+#     print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
+    
+#     # Callbacks
+#     checkpoint_callback = ModelCheckpoint(
+#         dirpath="checkpoints",
+#         filename="mae_swin3d_{epoch:03d}_{val_loss:.4f}",
+#         save_top_k=5,
+#         monitor="val_loss",
+#         mode="min",
+#         save_last=True,
+#         every_n_epochs=1
+#     )
+    
+#     lr_monitor = LearningRateMonitor(logging_interval='epoch')
+    
+#     # Initialize model and trainer
+#     model = MAEPretrain(CFG)
+    
+#     trainer = pl.Trainer(
+#         max_epochs=CFG.epochs,
+#         accelerator="auto",
+#         devices=-1,
+#         strategy="ddp" if torch.cuda.device_count() > 1 else "auto",
+#         log_every_n_steps=20,
+#         val_check_interval=1.0,
+#         gradient_clip_val=CFG.max_grad_norm,
+#         gradient_clip_algorithm="norm",
+#         callbacks=[checkpoint_callback, lr_monitor],
+#         precision="16-mixed",  # Mixed precision training
+#         deterministic=True
+#     )
+    
+#     # Train
+#     trainer.fit(model, train_loader, val_loader)
+    
+#     print("Training completed!")
+
+# if __name__ == "__main__":
+#     main()
+

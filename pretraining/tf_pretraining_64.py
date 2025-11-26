@@ -72,16 +72,16 @@ class CFG:
     current_dir = '../'
     segment_path = './pretraining_scrolls/'
     
-    start_idx = 20
-    in_chans = 20
+    start_idx = 22
+    in_chans = 18
     valid_chans = 16 # chans used 
     
     size = 64
     tile_size = 64
     stride = tile_size // 1
     
-    train_batch_size =  100
-    valid_batch_size = 5
+    train_batch_size =  256
+    valid_batch_size = 20
     lr = 1e-4
     # num_workers = 16
     
@@ -94,7 +94,7 @@ class CFG:
     frags_ratio1 = ['frag','re']
     frags_ratio2 = ['202','s4','left']
     ratio1 = 2
-    ratio2 = 1
+    ratio2 = 2
     
     # ============== valid =============
     segments = ['20240304141531'] 
@@ -172,8 +172,8 @@ train_size = len(full_train_dataset) - val_size
 
 train_dataset, val_dataset = random_split(full_train_dataset, [train_size, val_size])
 
-train_loader = DataLoader(train_dataset, batch_size=CFG.train_batch_size, shuffle=True, num_workers=16)
-val_loader   = DataLoader(val_dataset, batch_size=CFG.valid_batch_size, shuffle=True, num_workers=16)
+train_loader = DataLoader(train_dataset, batch_size=CFG.train_batch_size, shuffle=True, num_workers=8)
+val_loader   = DataLoader(val_dataset, batch_size=CFG.valid_batch_size, shuffle=True, num_workers=8)
 
 print(f"Train loader length: {len(train_loader)}")
 from torch.optim import AdamW
@@ -187,7 +187,51 @@ from transformers import TimesformerModel, TimesformerConfig
 import matplotlib.pyplot as plt
 import numpy as np
     
-def visualize_reconstruction(original, reconstructed, sample_idx=0, num_frames=8,save_path='./results/reconstruction.png',epoch=0):
+# def visualize_reconstruction(original, reconstructed, sample_idx=0, num_frames=8,save_path='./results/reconstruction.png',epoch=0):
+#     """
+#     Visualize original and reconstructed video frames side by side.
+
+#     Args:
+#         original: tensor (B, T, C, H, W) original video batch
+#         reconstructed: tensor (B, T, C, H, W) reconstructed video batch
+#         sample_idx: int, index in batch to visualize
+#         num_frames: int, number of frames to display
+#     """
+#     # orig = denormalize(orig)
+#     # recon = denormalize(recon)
+#     orig = original[sample_idx]     # (T, C, H, W)
+#     recon = reconstructed[sample_idx]  # (T, C, H, W)
+
+#     # If grayscale, squeeze channel dim
+#     if orig.shape[1] == 1:
+#         orig = orig.squeeze(1)
+#         recon = recon.squeeze(1)
+
+#     # Clamp and convert to numpy
+#     orig = orig.cpu().numpy()
+#     recon = recon.cpu().detach().numpy()
+
+#     fig, axes = plt.subplots(2, num_frames, figsize=(3 * num_frames, 6))
+
+#     for i in range(num_frames):
+#         # Original frame
+#         ax = axes[0, i]
+#         ax.imshow(orig[i], cmap='gray')
+#         ax.set_title(f"Original Frame {i}")
+#         ax.axis('off')
+
+#         # Reconstructed frame
+#         ax = axes[1, i]
+#         ax.imshow(recon[i], cmap='gray')
+#         ax.set_title(f"Reconstructed Frame {i}")
+#         ax.axis('off')
+
+#     if save_path is not None:
+#         os.makedirs(os.path.dirname(f'./results/reconstruction_64_tf_16_fs_{epoch}.png'), exist_ok=True)
+#         plt.savefig(f'./results/reconstruction_64_tf_16_fs_{epoch}.png', dpi=300, bbox_inches='tight')
+#     plt.close(fig)
+
+def visualize_reconstruction(original, reconstructed, sample_idx=0, num_frames=8, save_path='./results/reconstruction.png', epoch=0):
     """
     Visualize original and reconstructed video frames side by side.
 
@@ -197,8 +241,6 @@ def visualize_reconstruction(original, reconstructed, sample_idx=0, num_frames=8
         sample_idx: int, index in batch to visualize
         num_frames: int, number of frames to display
     """
-    # orig = denormalize(orig)
-    # recon = denormalize(recon)
     orig = original[sample_idx]     # (T, C, H, W)
     recon = reconstructed[sample_idx]  # (T, C, H, W)
 
@@ -207,7 +249,11 @@ def visualize_reconstruction(original, reconstructed, sample_idx=0, num_frames=8
         orig = orig.squeeze(1)
         recon = recon.squeeze(1)
 
-    # Clamp and convert to numpy
+    # Clip to [-1, 1]
+    orig = torch.clamp(orig, -1.0, 1.0)
+    recon = torch.clamp(recon, -1.0, 1.0)
+
+    # Convert to numpy
     orig = orig.cpu().numpy()
     recon = recon.cpu().detach().numpy()
 
@@ -216,13 +262,13 @@ def visualize_reconstruction(original, reconstructed, sample_idx=0, num_frames=8
     for i in range(num_frames):
         # Original frame
         ax = axes[0, i]
-        ax.imshow(orig[i], cmap='gray')
+        ax.imshow(orig[i], cmap='gray', vmin=-1, vmax=1)
         ax.set_title(f"Original Frame {i}")
         ax.axis('off')
 
         # Reconstructed frame
         ax = axes[1, i]
-        ax.imshow(recon[i], cmap='gray')
+        ax.imshow(recon[i], cmap='gray', vmin=-1, vmax=1)
         ax.set_title(f"Reconstructed Frame {i}")
         ax.axis('off')
 
@@ -230,7 +276,7 @@ def visualize_reconstruction(original, reconstructed, sample_idx=0, num_frames=8
         os.makedirs(os.path.dirname(f'./results/reconstruction_64_tf_16_fs_{epoch}.png'), exist_ok=True)
         plt.savefig(f'./results/reconstruction_64_tf_16_fs_{epoch}.png', dpi=300, bbox_inches='tight')
     plt.close(fig)
-
+    
 import math
 class MAEPretrain(pl.LightningModule):
     def __init__(self, lr=1e-4, mask_ratio=0.75, embed_dim=768, decoder_dim=512, decoder_layers=4):
@@ -239,15 +285,15 @@ class MAEPretrain(pl.LightningModule):
         self.print_shape = False
         
         config = TimesformerConfig(
-            num_frames=8,
+            num_frames=16,
             image_size=64,
-            patch_size=8,
+            patch_size=16,
             num_channels=1,
             attention_type="divided_space_time",
             hidden_size=768,           # embedding dimension
-            num_attention_heads=8,
+            num_attention_heads=12,
             intermediate_size=768,
-            num_hidden_layers=6        # <--- THIS is the depth (# of transformer blocks)
+            num_hidden_layers=10        # <--- THIS is the depth (# of transformer blocks)
         )
         encoder = TimesformerModel(config)
 
@@ -262,6 +308,9 @@ class MAEPretrain(pl.LightningModule):
         mse_loss = nn.MSELoss()
 
         self.criterion = lambda pred, target: mse_loss(pred, target)     
+        # l1_loss = nn.L1Loss()
+        # self.criterion = lambda pred, target: l1_loss(pred, target)
+
         
         self.N = self.input_T * self.input_H * self.input_W // (self.patch_size**2*self.tubelet_size)
         print(f"Total patches: {self.N}")
@@ -292,12 +341,70 @@ class MAEPretrain(pl.LightningModule):
         self.decoder_transformer = nn.TransformerEncoder(decoder_layer, num_layers=decoder_layers)
         self.decoder_pred = nn.Sequential(
             nn.Linear(decoder_dim, self.patch_size**2),
-            nn.Tanh()  # ensures outputs in [-1, 1]
+            # nn.Tanh()  # ensures outputs in [-1, 1]
         )
 
         # Mask token for masked patches in decoder
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
         nn.init.normal_(self.mask_token, std=0.02)
+        
+    def frame_masking(self, x, mask_ratio=0.75):
+        """
+        Frame-level masking applied to patchified input.
+        x: (B, N, D) where 
+        N = (T//tubelet) * (H//ps) * (W//ps)
+        Returns:
+            x_masked:   (B, n_keep*H_p*W_p, D)
+            ids_keep:   (B, n_keep*H_p*W_p)
+            ids_masked: (B, n_mask*H_p*W_p)
+            ids_restore:(B, N)  - to restore original order
+        """
+        B, N, D = x.shape
+        T_groups = self.input_T // self.tubelet_size   # e.g., 4
+        H_groups = self.input_H // self.patch_size     # e.g., 7
+        W_groups = self.input_W // self.patch_size     # e.g., 7
+        # print(T_groups,H_groups,W_groups)
+        # print(N)
+        patches_per_frame = H_groups * W_groups
+        assert N == T_groups * patches_per_frame, "Patch count mismatch"
+
+        n_keep_frames = int((1 - mask_ratio) * T_groups)
+        n_keep = n_keep_frames * patches_per_frame
+
+        ids_keep, ids_masked, ids_restore = [], [], []
+
+        for b in range(B):
+            # permute frames
+            perm_frames = torch.randperm(T_groups, device=x.device)
+            keep_frames = perm_frames[:n_keep_frames]
+            mask_frames = perm_frames[n_keep_frames:]
+
+            # expand to patch indices
+            keep_idx = (keep_frames[:, None] * patches_per_frame +
+                        torch.arange(patches_per_frame, device=x.device)[None, :])
+            mask_idx = (mask_frames[:, None] * patches_per_frame +
+                        torch.arange(patches_per_frame, device=x.device)[None, :])
+
+            keep_idx = keep_idx.flatten()
+            mask_idx = mask_idx.flatten()
+
+            # build restore index
+            perm = torch.cat([keep_idx, mask_idx], dim=0)
+            ids_restore_b = torch.empty_like(perm)
+            ids_restore_b[perm] = torch.arange(N, device=x.device)
+
+            ids_keep.append(keep_idx)
+            ids_masked.append(mask_idx)
+            ids_restore.append(ids_restore_b)
+
+        ids_keep = torch.stack(ids_keep, dim=0)      # (B, n_keep)
+        ids_masked = torch.stack(ids_masked, dim=0)  # (B, n_mask)
+        ids_restore = torch.stack(ids_restore, dim=0) # (B, N)
+
+        # gather visible patches
+        x_masked = torch.gather(x, 1, ids_keep.unsqueeze(-1).expand(-1, -1, D))
+
+        return x_masked, ids_keep, ids_masked, ids_restore
 
     def random_masking(self, x, mask_ratio=0.75):
         """
@@ -365,7 +472,7 @@ class MAEPretrain(pl.LightningModule):
         mask = torch.ones_like(all_ids, dtype=torch.bool)
         mask.scatter_(1, ids_keep, False)
         
-        pt = 4#T // self.tubelet_size 
+        pt = T // self.tubelet_size 
         ph = pw = int((self.unmasked_patches // pt) ** 0.5)
         if self.print_shape:
             print(pt,ph,pw)
@@ -394,7 +501,6 @@ class MAEPretrain(pl.LightningModule):
         # 6. Prepare mask tokens for masked patches
         mask_tokens = self.mask_token.expand(B, ids_masked.shape[1], -1)  # (B, n_masked, decoder_dim)
 
-        # print(mask_tokens.shape)
         # 7. Create full sequence tensor for decoder input
         # Restore to original order
         x_ = torch.cat([x_vis, mask_tokens], dim=1)  # (B, n_keep + n_masked, D)
@@ -480,62 +586,144 @@ class MAEPretrain(pl.LightningModule):
         target_masked = torch.gather(target, 1, ids_masked_exp)  # (B, n_mask, D)
 
         # Compute loss only on masked patches
+        # In loss calculation
         loss = self.criterion(pred_masked, target_masked)
         self.log("train_loss", loss, prog_bar=True, logger=True, sync_dist=True)  # sync across devices
         self.log("lr", self.optimizers().param_groups[0]['lr'], prog_bar=True, logger=True, sync_dist=True)
 
         return loss
     
+    # def validation_step(self, batch, batch_idx):
+    #     x = batch
+    #     recon, _, mask, _, _, _ = self(x)
+    #     loss = self.criterion(recon, x)
+    #     self.log('val_loss', loss, prog_bar=True)
+    #     # Save first batch to visualize later
+    #     if batch_idx == 0:
+    #         self.val_batch_for_viz = (x, mask, recon)
+    #     return loss
     def validation_step(self, batch, batch_idx):
         x = batch
-        recon, _, mask, _, _, _ = self(x)
-        loss = self.criterion(recon, x)
-        self.log('val_loss', loss, prog_bar=True)
-        # Save first batch to visualize later
+        recon, _, mask, ids_masked, pred, target = self(x)
+        
+        # Same as training - loss on masked patches only
+        B, N, D = pred.shape
+        ids_masked_exp = ids_masked.unsqueeze(-1).expand(-1, -1, D)
+        pred_masked = torch.gather(pred, 1, ids_masked_exp)
+        target_masked = torch.gather(target, 1, ids_masked_exp)
+        loss = self.criterion(pred_masked, target_masked)
+        
         if batch_idx == 0:
             self.val_batch_for_viz = (x, mask, recon)
-        return loss
+
+        self.log('val_loss', loss, prog_bar=True)
 
     def on_validation_epoch_end(self):
-        if self.global_rank == 0 and hasattr(self, 'val_batch_for_viz'):
-            x, mask, recon = self.val_batch_for_viz
-            visualize_reconstruction(x, recon, sample_idx=0, num_frames=16,epoch=self.current_epoch)
+        if self.global_rank == 0:
+            
+            # Get metrics
+            val_loss = self.trainer.callback_metrics.get('val_loss', None)
+            train_loss = self.trainer.callback_metrics.get('train_loss', None)
+            
+            # Save to CSV
+            import csv
+            import os
+            
+            log_path = "training_history.csv"
+            file_exists = os.path.isfile(log_path)
+            
+            with open(log_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(['epoch','train_loss', 'val_loss'])
+                
+                train_loss_val = train_loss.item() if train_loss is not None else 'N/A'
+                val_loss_val = val_loss.item() if val_loss is not None else 'N/A'
+                writer.writerow([self.current_epoch,train_loss_val, val_loss_val])
+            
+            if hasattr(self, 'val_batch_for_viz'):
+                x, mask, recon = self.val_batch_for_viz
+                visualize_reconstruction(x, recon, sample_idx=0, num_frames=CFG.valid_chans, epoch=self.current_epoch)
+    # def on_validation_epoch_end(self):
+    #     if self.global_rank == 0 and hasattr(self, 'val_batch_for_viz'):
+    #         x, mask, recon = self.val_batch_for_viz
+    #         visualize_reconstruction(x, recon, sample_idx=0, num_frames=8,epoch=self.current_epoch)
 
+    # def configure_optimizers(self):
+
+    #     optimizer = AdamW(
+    #         self.parameters(),  # encoder + decoder
+    #         lr=self.hparams.lr,          # scaled for batch 800
+    #         weight_decay=0.001
+    #     )
+
+    #     # Cosine LR with warmup
+    #     cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100)
+    #     scheduler = GradualWarmupScheduler(
+    #         optimizer, multiplier=1, total_epoch=5, after_scheduler=cosine_scheduler
+    #     )
+
+    #     return [optimizer], [scheduler]
     def configure_optimizers(self):
-
         optimizer = AdamW(
-            self.parameters(),  # encoder + decoder
-            lr=4e-4,          # scaled for batch 800
-            weight_decay=0.1
+            self.parameters(),
+            lr=1e-4,
+            betas=(0.9, 0.95),      # ← Important change
+            weight_decay=0.05,       # ← Increased from 0.001
         )
 
-        # Cosine LR with warmup
-        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+        # Warmup + Cosine schedule
+        total_epochs = 100
+        warmup_epochs = 10  # 10% of training (was 5, increase for stability)
+        
+        cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, 
+            T_max=total_epochs - warmup_epochs,
+            eta_min=1e-6  # Minimum LR
+        )
+        
         scheduler = GradualWarmupScheduler(
-            optimizer, multiplier=1, total_epoch=5, after_scheduler=cosine_scheduler
+            optimizer,
+            multiplier=1,
+            total_epoch=warmup_epochs,
+            after_scheduler=cosine_scheduler
         )
 
         return [optimizer], [scheduler]
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
+torch.set_float32_matmul_precision('medium')
 
 # Save a checkpoint at the end of every epoch
 checkpoint_callback = ModelCheckpoint(
     dirpath="checkpoints",             # folder to save
-    filename="64_tf_16_fs_{epoch}",           # filename pattern
+    filename="64_tf_8_{epoch}",           # filename pattern
     save_top_k=-1,                     # save all checkpoints
     every_n_epochs=1                   # save every epoch
 )
 model = MAEPretrain()
+
 trainer = pl.Trainer(
-    max_epochs=200,
+    max_epochs=100,
     accelerator="auto",
-    devices=-1,                     # use all available GPUs
+    devices=-1,
+    precision="16-mixed",  # or "bf16-mixed" if you have Ampere+ GPU
     log_every_n_steps=20,
     check_val_every_n_epoch=1,
-    gradient_clip_val=1.0,          # clip gradients to stabilize training
-    gradient_clip_algorithm="norm", # clip by norm (recommended for Transformers)
-    callbacks=[checkpoint_callback]
-)# trainer.validate(model, valid_loader)
-trainer.fit(model, train_loader, val_loader)
+    gradient_clip_val=1.0,
+    gradient_clip_algorithm="norm",
+    # callbacks=[checkpoint_callback],
+)
+# trainer.validate(model, val_loader, verbose=True)
+trainer.fit(model, val_loader, val_loader)#, ckpt_path='checkpoints/64_tf_8_epoch=4.ckpt')
+
+# model = MAEPretrain.load_from_checkpoint(
+#     "checkpoints/64_tf_16_fs_epoch=3-v2.ckpt",
+#     lr=6e-5  # Use 'learning_rate' not 'lr'
+# )
+# for param_group in model.configure_optimizers()[0][0].param_groups:
+#     param_group['lr'] = 6e-5
+
+# # trainer.validate(model, val_loader, verbose=True)
+# trainer.fit(model, train_loader, val_loader)

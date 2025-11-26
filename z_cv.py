@@ -57,6 +57,8 @@ from PIL import Image, ImageOps
 from skimage.transform import resize
 import tifffile as tiff
 from models import unetr
+import numpy as np
+from scipy.ndimage import zoom
 
 from pytorch_lightning.utilities import rank_zero_only
 
@@ -78,12 +80,12 @@ class CFG:
     exp_name = 'pretraining_all'
     
     # ============== model cfg =============
-    frags = ['20231210132040','frag5','frag1']#,'20231215151901']#'frag1',
+    frags = ['20231210132040']#,'20231215151901']#'frag1',
     valid_id = '20231210132040'#'20240304141530'#'20231210132040',20240716140050
     
     # Change the size of fragments2
-    frags_ratio1 = ['frag','re']
-    frags_ratio2 = ['s4','202','alpha']
+    frags_ratio1 = ['frag','re','f','g']
+    frags_ratio2 = ['s4','202','alpha','omega']
     ratio1 = 2
     ratio2 = 2
     backbone='resnet3d'
@@ -92,15 +94,15 @@ class CFG:
     tile_size = 256
     stride = tile_size // 8
 
-    train_batch_size =  12
-    valid_batch_size = 25
+    train_batch_size =  15
+    valid_batch_size = 30
 
 
     scheduler = 'GradualWarmupSchedulerV2'
     
-    start_idx = 10
-    in_chans = 30
-    valid_chans = 24
+    start_idx = 24
+    in_chans = 16
+    valid_chans = 16
     
     epochs = 40 # 30
     lr = 2e-5
@@ -135,7 +137,7 @@ class CFG:
         A.VerticalFlip(p=0.5),
 
         A.RandomBrightnessContrast(p=0.75),
-        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.15,p=0.75),
+        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.1,p=0.75),
         A.OneOf([
                 A.GaussNoise(var_limit=[10, 50]),
                 A.GaussianBlur(),
@@ -210,10 +212,15 @@ def read_image_mask(fragment_id, start_idx, in_chans):
     if fragment_id==CFG.valid_id:
 
         print('valid')
-        start_idx = int(start_idx+5+(CFG.in_chans-CFG.valid_chans)//2)
+        start_idx = int(start_idx+(CFG.in_chans-CFG.valid_chans)//2)-10
         end_idx = start_idx + CFG.valid_chans
         idxs = range(start_idx, end_idx)
         print(start_idx)
+        # print('valid')
+        # start_idx = 15
+        # end_idx = start_idx + 32
+        # idxs = range(start_idx, end_idx)
+        # print(start_idx)
         
     for i in idxs:
     
@@ -254,8 +261,22 @@ def read_image_mask(fragment_id, start_idx, in_chans):
         image=np.clip(image,0,200)
         images.append(image)
         
+        
+        
     images = np.stack(images, axis=2)
     print('shape',images.shape, flush=True)
+    
+    # if fragment_id == CFG.valid_id:
+    #     print('interpolate valid chans')
+
+    #     # Suppose images has shape (H, W, D)
+    #     H, W, D = images.shape
+
+    #     # Compute zoom factors
+    #     zoom_factors = (1, 1, 16 / D)
+
+    #     # Interpolate along depth (third axis)
+    #     images = zoom(images, zoom_factors, order=1)  # order=1 → linear interpolation
 
     mask = cv2.imread( f"train_scrolls/{fragment_id}/{fragment_id}_inklabels.png", 0)
     mask = cv2.resize(mask , image_shape, interpolation=cv2.INTER_NEAREST)
@@ -300,18 +321,11 @@ def get_train_valid_dataset():
                         y2=y1+CFG.size
                         x2=x1+CFG.size
 
-                        if fragment_id=='frag5':
+                        if fragment_id=='s4hjgjv':
                             if (y1,y2,x1,x2) not in windows_dict:
                                 if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.1):
-                                    if np.mean(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]) >= 0.5:
-                                        train_images.append(image[y1:y2, x1:x2])
-                                        train_masks.append(mask[y1:y2, x1:x2, None])
-                                        assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
-                                        windows_dict[(y1,y2,x1,x2)]='1'
-                        elif fragment_id=='s4':
-                            if (y1,y2,x1,x2) not in windows_dict:
-                                if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.1):
-                                    if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]==0):
+                                    # if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]==0):
+                                    if np.mean(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]) >= 0.3:
                                         train_images.append(image[y1:y2, x1:x2])
                                         tile_mask = mask[y1:y2, x1:x2]
                                         tile_mask = cv2.GaussianBlur(tile_mask, (15,15), 0)  # simple soft smoothing
@@ -323,6 +337,7 @@ def get_train_valid_dataset():
                             if (y1,y2,x1,x2) not in windows_dict:
                                 if not np.all(mask[a:a + CFG.tile_size, b:b + CFG.tile_size]<0.1):
                                     if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]==0):
+                                    # if np.mean(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]) >= 0.5:
                                         train_images.append(image[y1:y2, x1:x2])
                                         train_masks.append(mask[y1:y2, x1:x2, None])
                                         assert image[y1:y2, x1:x2].shape==(CFG.size,CFG.size,CFG.in_chans)
@@ -330,6 +345,7 @@ def get_train_valid_dataset():
                         elif fragment_id==CFG.valid_id:
                             if (y1,y2,x1,x2) not in windows_dict:
                                 if not np.any(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]==0):
+                                # if np.mean(fragment_mask[a:a + CFG.tile_size, b:b + CFG.tile_size]) >= 0.5:
                                         valid_images.append(image[y1:y2, x1:x2])
                                         valid_masks.append(mask[y1:y2, x1:x2, None])
                                         valid_xyxys.append([x1, y1, x2, y2])
@@ -385,7 +401,7 @@ class CustomDataset(Dataset):
         Custom channel augmentation that returns exactly 24 channels.
         """
         # always select 24 channels
-        remove_n = 1
+        remove_n = 0
         cropping_num = CFG.valid_chans + remove_n
 
         # pick crop indices
@@ -441,6 +457,7 @@ class CustomDataset(Dataset):
             label = self.labels[idx]
             
             image=self.fourth_augment(image)
+            # image=self.shuffle(image)
             
             if self.transform:
                 data = self.transform(image=image, mask=label)
@@ -485,7 +502,7 @@ class RegressionPLModel(pl.LightningModule):
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth = self.hparams.smooth)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary')#,smooth = self.hparams.smooth)
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=self.hparams.smooth)
         self.loss_func= lambda x,y: self.hparams.a * self.loss_func1(x,y) + self.hparams.b*self.loss_func2(x,y)
         self.mask_gt = np.zeros(self.hparams.pred_shape)
@@ -498,6 +515,11 @@ class RegressionPLModel(pl.LightningModule):
         # self.backbone=InceptionI3d(in_channels=1,num_classes=512,non_local=True)
         # self.backbone.load_state_dict(torch.load('./pretraining_i3d_epoch=3.pt'),strict=False)
         self.decoder = Decoder(encoder_dims=[x.size(1) for x in self.backbone(torch.rand(1,1,20,256,256))], upscale=1)
+        
+        # # Example: freeze conv1 and layer1
+        # for name, param in self.backbone.named_parameters():
+        #     if name.startswith(("conv1", "layer1", "layer2",'layer3')):
+        #         param.requires_grad = False
         # for param in self.backbone.parameters():
         #     param.requires_grad = False
 
@@ -655,25 +677,36 @@ class RegressionPLModel(pl.LightningModule):
     def configure_optimizers(self):
         based_lr = CFG.lr
         param_groups = [
-            {'params': self.backbone.parameters(), 'lr': based_lr, 'weight_decay': 5e-10},
-            {'params': self.decoder.parameters(), 'lr': based_lr, 'weight_decay': 5e-10},
+            {'params': self.backbone.parameters(), 'lr': based_lr, 'weight_decay': 5e-3},
+            {'params': self.decoder.parameters(), 'lr': based_lr, 'weight_decay': 5e-3},
         ]
            
             
         optimizer = AdamW(param_groups)
         # # Scheduler for OneCycleLR
         # steps_per_epoch = 143 * 4  # adjust as per your dataloader
-        # scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        #     optimizer,
-        #     max_lr=[group['lr'] for group in param_groups],  # pass per-group max_lr
-        #     pct_start=0.15,
-        #     steps_per_epoch=143,
-        #     epochs=25,
-        #     final_div_factor=1e2
-        # )
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=[group['lr'] for group in param_groups],  # pass per-group max_lr
+            pct_start=0.35,
+            steps_per_epoch=143,
+            epochs=25,
+            final_div_factor=1e2
+        )
 
-        return [optimizer]#, [{'scheduler': scheduler, 'interval': 'step'}]
-
+        return [optimizer], [{'scheduler': scheduler, 'interval': 'step'}]
+    
+    def predict_step(self, batch, batch_idx):
+        """Add this to your RegressionPLModel class"""
+        x, y, xyxys = batch
+        
+        outputs = self(x)
+        y_preds = torch.sigmoid(outputs)
+        
+        return {
+            'preds': y_preds.cpu(),
+            'xyxys': xyxys
+        }
     
 
 def scheduler_step(scheduler, avg_val_loss, epoch):
@@ -681,15 +714,19 @@ def scheduler_step(scheduler, avg_val_loss, epoch):
 
 torch.cuda.empty_cache()
 
-torch.set_float32_matmul_precision('high')
-
-for a in [0.6]:
-    for norm in [False]:
-        for smooth in [0.25]:
-            # for size in [1,2]:
-                for f in [['remaining5','rect5']]: 
-                    # CFG.valid_id = f[-1]
-                    # CFG.frags = f
+torch.set_float32_matmul_precision('medium')
+# for f in [['frag5','20231210132040'],['frag5','frag1','20231210132040']]:  #'s4','omega',
+for r1 in [2,1]:
+    for a in [0.6,0.5]:
+        for r1 in [2,1]:
+            for f in [['frag5','20231210132040'],['frag5','frag1','20231210132040']]:  #'s4','omega',
+                smooth = 0.25
+                norm = True
+                for ratio in [2,1]:
+                    CFG.valid_id = f[-1]
+                    CFG.frags = f
+                    CFG.ratio2 = 1#ratio
+                    CFG.ratio1 = 2#r1
                     max = True
         
                     enc='resnet101'
@@ -743,12 +780,12 @@ for a in [0.6]:
                     model=RegressionPLModel(enc='resnet101',pred_shape=pred_shape,size=CFG.size,total_steps=len(train_loader), with_norm=norm, a = a,b = 1-a,max= max, smooth=smooth)
                     
                     # # DION
-                    # checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/RESNET_['remaining5', 'rect5']_valid=rect5_size=256_lr=2e-05_in_chans=30_norm=False_a=0.6_max=<built-in function max>_smooth=0.25resnet101-v6.ckpt", map_location="cpu", weights_only=False)
+                    # checkpoint = torch.load("outputs/vesuvius/pretraining_all/vesuvius-models/RESNET_['frag5', 'frag1', '20240304141530']_valid=20240304141530_size=256_lr=2e-05_in_chans=30_norm=True_a=0.6_max=True_smooth=0.25_epoch=epoch=11.ckpt", map_location="cpu", weights_only=False)
                     # model.load_state_dict(checkpoint["state_dict"], strict=True)
 
                     wandb_logger.watch(model, log="all", log_freq=50)
                     trainer = pl.Trainer(
-                    max_epochs=25,
+                    max_epochs=15,
                     accelerator="gpu",
                     devices=-1,
                     check_val_every_n_epoch=4,
@@ -767,3 +804,6 @@ for a in [0.6]:
                     trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
 
                     wandb.finish()
+
+
+

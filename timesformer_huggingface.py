@@ -243,7 +243,7 @@ def worker_function(fragment_id, CFG):
     return train_images, train_masks, valid_images, valid_masks, valid_xyxys
 
 
-def get_train_valid_dataset(fragment_ids=['20231210132040','frag5','frag1']):
+def get_train_valid_dataset(fragment_ids=['20231210132040','frag5']):
     threads = []
     results = [None] * len(fragment_ids)
     
@@ -477,9 +477,9 @@ class RegressionPLModel(pl.LightningModule):
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
 
-        self.loss_func1 = smp.losses.DiceLoss(mode='binary',smooth=0.15)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary')
         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25)
-        self.loss_func= lambda x,y: 0.6* self.loss_func1(x,y)+0.4*self.loss_func2(x,y)
+        self.loss_func= lambda x,y: 0.5* self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
     
         self.backbone = TimesformerModel.from_pretrained("facebook/timesformer-hr-finetuned-k600")
         # self.decoder_for_cls = CLSBasedDecoder(cls_dim=768, embed_dim=768, spatial_size=14, num_layers=3, num_heads=8)
@@ -590,7 +590,7 @@ class RegressionPLModel(pl.LightningModule):
         # Define parameter groups
         param_groups = [
             {'params': other_params, 'lr': self.hparams.lr},
-            {'params': head_params, 'lr': self.hparams.lr },  # 10x LR for the head
+            {'params': head_params, 'lr': self.hparams.lr*10 },  # 10x LR for the head
         ]
 
         optimizer = AdamW(param_groups)
