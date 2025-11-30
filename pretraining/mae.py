@@ -29,15 +29,15 @@ class CFG:
     segment_path = './pretraining_scrolls/'
     
     # Model architecture
-    start_idx = 15
-    in_chans = 30
-    valid_chans = 24
-    size = 224
-    tile_size = 224
+    start_idx = 22
+    in_chans = 18
+    valid_chans = 16
+    size = 64
+    tile_size = 64
     
     # Training hyperparameters
-    train_batch_size = 64  # Reduced for video processing
-    valid_batch_size = 80
+    train_batch_size = 256  # Reduced for video processing
+    valid_batch_size = 256
     lr = 1e-4
     epochs = 200
     warmup_epochs = 5
@@ -46,8 +46,8 @@ class CFG:
     mask_ratio = 0.75  # VideoMAE typically uses high mask ratios (0.75-0.9)
     
     # VideoMAE Architecture
-    image_size = 224
-    patch_size = 16  # Spatial patch size
+    image_size = size
+    patch_size = 8  # Spatial patch size
     num_channels = 1  # VideoMAE expects 3 channels (RGB-like)
     input_channels = 1  # Our actual input channels (grayscale)
     hidden_size = 768  # Smaller for efficiency
@@ -60,7 +60,7 @@ class CFG:
     decoder_intermediate_size = 768
     
     # Video dimensions
-    input_frames = 24
+    input_frames = 16
     tubelet_size = 2  # Temporal patch size
     
     # Optimizer
@@ -110,7 +110,7 @@ class TileDataset(Dataset):
         self.tile_paths = []
         
         for split in splits:
-            split_path = Path(base_path) / "224_tiles" / split
+            split_path = Path(base_path) / "64_tiles" / split
             if split_path.exists():
                 self.tile_paths.extend([
                     str(p) for p in split_path.glob("*.npy")
@@ -208,65 +208,7 @@ class VideoMAEModel(pl.LightningModule):
         print(f"  - Total patches: {self.total_patches}")
         print(f"  - Mask ratio: {self.cfg.mask_ratio}")
     
-    # def forward(self, video):
-    #     """
-    #     Forward pass through VideoMAE.
-        
-    #     Args:
-    #         video: (B, T, C, H, W) - batch of videos where C=1
-            
-    #     Returns:
-    #         loss: reconstruction loss
-    #         reconstructed: (B, T, C, H, W) reconstructed video
-    #         mask: (B, num_patches) binary mask
-    #     """
-    #     # VideoMAE expects (B, C, T, H, W)
-    #     video_input = video.permute(0, 2, 1, 3, 4)  # (B, T, C, H, W) -> (B, C, T, H, W)
-        
-    #     # # Convert 1 channel to 3 channels
-    #     # if video_input.shape[1] == 1:
-    #     #     video_input = self.channel_adapter(video_input)  # (B, 1, T, H, W) -> (B, 3, T, H, W)
-    # def forward(self, video):
-    #     # video: (B, T, 1, H, W)
-
-    #     # Convert to (B, 1, T, H, W) for Conv3d
-    #     # video_3d = video.permute(0, 2, 1, 3, 4)
-
-    #     # Convert 1-channel → 3-channel
-    #     # video_3d = self.channel_adapter(video_3d)
-
-    #     # Convert to VideoMAE expected format (B, T, 3, H, W)
-    #     # video_input = video_3d.permute(0, 2, 1, 3, 4)
-
-    #     # outputs = self.videomae(pixel_values=video)
-
-        
-    #     print(video.shape)
-    #     # Forward through VideoMAE
-    #     outputs = self.videomae(
-    #         pixel_values=video,
-    #         bool_masked_pos=None,  # Will generate random tube mask internally
-    #     )
-        
-    #     # outputs.loss is the reconstruction loss on masked patches
-    #     # outputs.logits contains the reconstructed pixel values
-    #     loss = outputs.loss
-        
-    #     # Reconstruct video from logits
-    #     # logits shape: (B, num_patches, tubelet_size * patch_size^2 * C)
-    #     reconstructed = self.videomae.unpatchify(outputs.logits)  # (B, C, T, H, W)
-        
-    #     # Convert back to single channel (average across channels)
-    #     if reconstructed.shape[1] == 3:
-    #         reconstructed = reconstructed.mean(dim=1, keepdim=True)  # (B, 3, T, H, W) -> (B, 1, T, H, W)
-        
-    #     reconstructed = reconstructed.permute(0, 2, 1, 3, 4)  # (B, C, T, H, W) -> (B, T, C, H, W)
-        
-    #     # Get mask
-    #     mask = outputs.mask if hasattr(outputs, 'mask') else None
-        
-    #     return loss, reconstructed, mask
-    def unpatchify(self, patches, num_frames, height, width, patch_size, tubelet_size, channels):
+    def _unpatchify(self, patches, num_frames, height, width, patch_size, tubelet_size, channels):
         """
         patches: (B, N, P) = (B, T'*H'*W', C * Ps * Ps * Ts)
         returns: (B, C, T, H, W)
@@ -322,75 +264,187 @@ class VideoMAEModel(pl.LightningModule):
         bool_mask[:, mask_idx] = True
         return bool_mask
 
+    # def forward(self, video):
+    #     """
+    #     video: (B, T, C, H, W) where C might be 1 (grayscale)
+    #     Returns: loss, reconstructed (B, T, C, H, W), mask (bool tensor)
+    #     """
+    #     # Basic asserts to help debugging
+    #     assert video.dim() == 5, f"Expected video to be (B, T, C, H, W), got {video.shape}"
+
+    #     batch_size, T, C, H, W = video.shape
+    #     device = video.device
+
+    #     # If single channel, expand to 3 channels by repeating (VideoMAE expects RGB-like).
+    #     if C == 1 and self.videomae.config.num_channels == 3:
+    #         # video: (B, T, 1, H, W) -> (B, T, 3, H, W)
+    #         video = video.repeat(1, 1, 3, 1, 1)
+
+    #     # Make sure pixel_values are floats in the expected range / dtype (model may expect float32)
+    #     video = video.to(dtype=torch.float32)
+
+    #     # Build boolean mask expected by VideoMAE: shape (batch_size, seq_length)
+    #     bool_masked_pos = self._make_bool_mask(batch_size, device)
+
+    #     # Call the model. The HF VideoMAEForPreTraining expects pixel_values in (B, T, C, H, W)
+    #     outputs = self.videomae(
+    #         pixel_values=video,
+    #         bool_masked_pos=bool_masked_pos,
+    #     )
+
+    #     # outputs.loss is the reconstruction loss
+    #     loss = outputs.loss
+
+    #     # recreate reconstructed video from logits using model helper if available
+    #     # outputs.logits shape: (B, seq_length, tubelet_size * patch_size^2 * C)
+    #     # HF model might provide .unpatchify on the module or within outputs; use model's unpatchify
+    #     logits = outputs.logits  # (B, N_visible, P)
+    #     mask = bool_masked_pos   # (B, N_total)
+
+    #     B, N_total = mask.shape
+    #     _, N_visible, P = logits.shape
+
+    #     # Create full sequence filled with zeros
+    #     full_seq = torch.zeros(B, N_total, P, device=logits.device, dtype=logits.dtype)
+
+    #     # Do NOT assign anything — all patches are zero
+
+    #     # Compute channels from patch embedding
+    #     patch_vec_len = P
+    #     patch_size = self.cfg.patch_size
+    #     tubelet_size = self.cfg.tubelet_size
+    #     channels = patch_vec_len // (patch_size * patch_size * tubelet_size)
+
+    #     # Unpatchify
+    #     reconstructed = self.unpatchify(
+    #         full_seq,
+    #         num_frames=self.cfg.input_frames,
+    #         height=self.cfg.image_size,
+    #         width=self.cfg.image_size,
+    #         patch_size=self.cfg.patch_size,
+    #         tubelet_size=self.cfg.tubelet_size,
+    #         channels=channels,
+    #     )
+
+    #     # Convert to (B, T, C, H, W)
+    #     if reconstructed.shape[1] == 3:
+    #         reconstructed = reconstructed.mean(dim=1, keepdim=True)
+    #     reconstructed = reconstructed.permute(0, 2, 1, 3, 4)
+
+
+    #     return loss, reconstructed, bool_masked_pos
     def forward(self, video):
         """
         video: (B, T, C, H, W) where C might be 1 (grayscale)
         Returns: loss, reconstructed (B, T, C, H, W), mask (bool tensor)
         """
-        # Basic asserts to help debugging
         assert video.dim() == 5, f"Expected video to be (B, T, C, H, W), got {video.shape}"
 
         batch_size, T, C, H, W = video.shape
         device = video.device
 
-        # If single channel, expand to 3 channels by repeating (VideoMAE expects RGB-like).
-        if C == 1 and self.videomae.config.num_channels == 3:
-            # video: (B, T, 1, H, W) -> (B, T, 3, H, W)
-            video = video.repeat(1, 1, 3, 1, 1)
+        # Store original for denormalization reference
+        original_video = video.clone()
 
-        # Make sure pixel_values are floats in the expected range / dtype (model may expect float32)
+        # If single channel, expand to 3 channels
+        if C == 1 and self.videomae.config.num_channels == 3:
+            video = video.repeat(1, 1, 3, 1, 1)
+            original_video = original_video.repeat(1, 1, 3, 1, 1)
+
         video = video.to(dtype=torch.float32)
 
-        # Build boolean mask expected by VideoMAE: shape (batch_size, seq_length)
+        # Build boolean mask: True = masked, False = visible
         bool_masked_pos = self._make_bool_mask(batch_size, device)
 
-        # Call the model. The HF VideoMAEForPreTraining expects pixel_values in (B, T, C, H, W)
+        # Forward pass
         outputs = self.videomae(
             pixel_values=video,
             bool_masked_pos=bool_masked_pos,
         )
 
-        # outputs.loss is the reconstruction loss
         loss = outputs.loss
-
-        # recreate reconstructed video from logits using model helper if available
-        # outputs.logits shape: (B, seq_length, tubelet_size * patch_size^2 * C)
-        # HF model might provide .unpatchify on the module or within outputs; use model's unpatchify
-        logits = outputs.logits  # (B, N_visible, P)
-        mask = bool_masked_pos   # (B, N_total)
+        logits = outputs.logits  # (B, num_masked_patches, patch_dim)
+        mask = bool_masked_pos   # (B, N_total), True = masked
 
         B, N_total = mask.shape
-        _, N_visible, P = logits.shape
+        _, N_masked, P = logits.shape
 
-        # Create full sequence filled with zeros
-        full_seq = torch.zeros(B, N_total, P, device=logits.device, dtype=logits.dtype)
-
-        # Do NOT assign anything — all patches are zero
-
-        # Compute channels from patch embedding
-        patch_vec_len = P
+        # Compute patch parameters
         patch_size = self.cfg.patch_size
         tubelet_size = self.cfg.tubelet_size
-        channels = patch_vec_len // (patch_size * patch_size * tubelet_size)
+        channels = P // (patch_size * patch_size * tubelet_size)
+
+        # === Denormalization ===
+        # When norm_pix_loss=True, the model predicts normalized patches.
+        # We need to denormalize using the original video's patch statistics.
+        
+        # Patchify original video to get mean/var per patch
+        original_patches = self._patchify(original_video)  # (B, N_total, P)
+        
+        # Compute mean and var for each patch
+        patch_mean = original_patches.mean(dim=-1, keepdim=True)  # (B, N_total, 1)
+        patch_var = original_patches.var(dim=-1, keepdim=True)    # (B, N_total, 1)
+        
+        # Get mean/var only for masked positions
+        masked_mean = patch_mean[mask].reshape(B, N_masked, 1)  # (B, N_masked, 1)
+        masked_var = patch_var[mask].reshape(B, N_masked, 1)    # (B, N_masked, 1)
+        
+        # Denormalize predictions: pred * sqrt(var + eps) + mean
+        denorm_logits = logits * (masked_var + 1e-6).sqrt() + masked_mean
+
+        # === Build full reconstruction ===
+        # Start with original patches for visible positions
+        full_seq = original_patches.clone()  # (B, N_total, P)
+        
+        # Replace masked positions with denormalized predictions
+        full_seq[mask] = denorm_logits.reshape(-1, P)
 
         # Unpatchify
-        reconstructed = self.unpatchify(
+        reconstructed = self._unpatchify(
             full_seq,
             num_frames=self.cfg.input_frames,
             height=self.cfg.image_size,
             width=self.cfg.image_size,
-            patch_size=self.cfg.patch_size,
-            tubelet_size=self.cfg.tubelet_size,
+            patch_size=patch_size,
+            tubelet_size=tubelet_size,
             channels=channels,
         )
 
-        # Convert to (B, T, C, H, W)
-        if reconstructed.shape[1] == 3:
+        # Convert back to original format
+        if reconstructed.shape[1] == 3 and C == 1:
             reconstructed = reconstructed.mean(dim=1, keepdim=True)
-        reconstructed = reconstructed.permute(0, 2, 1, 3, 4)
-
+        reconstructed = reconstructed.permute(0, 2, 1, 3, 4)  # (B, C, T, H, W) -> (B, T, C, H, W)
 
         return loss, reconstructed, bool_masked_pos
+
+
+    def _patchify(self, video):
+        """
+        Convert video to patches.
+        video: (B, T, C, H, W)
+        returns: (B, N, P) where N = num_patches, P = patch_dim
+        """
+        B, T, C, H, W = video.shape
+        patch_size = self.cfg.patch_size
+        tubelet_size = self.cfg.tubelet_size
+        
+        # Reshape to (B, C, T, H, W)
+        video = video.permute(0, 2, 1, 3, 4)
+        
+        T_p = T // tubelet_size
+        H_p = H // patch_size
+        W_p = W // patch_size
+        
+        # Reshape: (B, C, T_p, tubelet, H_p, patch, W_p, patch)
+        video = video.reshape(B, C, T_p, tubelet_size, H_p, patch_size, W_p, patch_size)
+        
+        # Permute to: (B, T_p, H_p, W_p, C, tubelet, patch, patch)
+        video = video.permute(0, 2, 4, 6, 1, 3, 5, 7)
+        
+        # Flatten to patches: (B, N, P)
+        patches = video.reshape(B, T_p * H_p * W_p, -1)
+        
+        return patches
 
     
     def training_step(self, batch, batch_idx):
@@ -499,10 +553,49 @@ class VideoMAEModel(pl.LightningModule):
         
         return [optimizer], [scheduler]
 
+import json
+from dataclasses import asdict
+
+
+
+def get_serializable_config(cfg_class):
+    """Extract only JSON-serializable attributes from CFG class"""
+    config = {}
+    for key, value in vars(cfg_class).items():
+        if key.startswith('_'):
+            continue
+        # Only include serializable types
+        if isinstance(value, (int, float, str, bool, type(None))):
+            config[key] = value
+        elif isinstance(value, (list, tuple)) and all(isinstance(x, (int, float, str, bool)) for x in value):
+            config[key] = value
+    return config
+
+
+def save_config(cfg_class, path):
+    """Save config to JSON file"""
+    config = get_serializable_config(cfg_class)
+    with open(path, 'w') as f:
+        json.dump(config, f, indent=2)
+    print(f"Config saved to {path}")
+
+
+def load_config_into_class(path, cfg_class):
+    """Load config from JSON and update CFG class"""
+    with open(path, 'r') as f:
+        config = json.load(f)
+    for key, value in config.items():
+        setattr(cfg_class, key, value)
+    return cfg_class
 
 def main():
     """Main training function"""
     # Set seed for reproducibility
+    
+    # In main(), after creating model:
+    # set_seed(CFG.seed)
+    
+    # Save config alongside checkpoints
     set_seed(CFG.seed)
     
     # Create datasets
@@ -558,17 +651,20 @@ def main():
     # Initialize model and trainer
     model = VideoMAEModel(CFG)
     
+    os.makedirs('checkpoints', exist_ok=True)
+    save_config(CFG, 'checkpoints/config.json')
+    
     trainer = pl.Trainer(
         max_epochs=CFG.epochs,
         accelerator="auto",
         devices=-1,
-        strategy="ddp_find_unused_parameters_true" if torch.cuda.device_count() > 1 else "auto",
+        strategy="ddp" if torch.cuda.device_count() > 1 else "auto",
         log_every_n_steps=20,
         val_check_interval=1.0,
         gradient_clip_val=CFG.max_grad_norm,
         gradient_clip_algorithm="norm",
         callbacks=[checkpoint_callback, lr_monitor],
-        precision="16-mixed",  # Mixed precision training
+        precision="16",  # Mixed precision training
         deterministic=True
     )
     

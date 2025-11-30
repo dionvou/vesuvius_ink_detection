@@ -3,23 +3,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
-
-from transformers import AutoImageProcessor#, TimesformerModel
 import numpy as np
 import torch
 import torchvision.transforms as T
 from PIL import Image
-import torch.nn as nn
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
-# from timesformer_pytorch import TimeSformer
-
-import random
-import threading
-import glob
-
 import numpy as np
 import wandb
 from torch.utils.data import DataLoader
@@ -56,12 +47,12 @@ class CFG:
     in_chans = 18
     valid_chans = 16
     
-    size = 64
-    tile_size = 256
+    size = 224
+    tile_size = 224
     stride = tile_size // 8
 
-    train_batch_size = 40
-    valid_batch_size = 110     
+    train_batch_size = 5
+    valid_batch_size = 10     
     lr = 5e-5
     # ============== model cfg =============
     scheduler = 'cosine'
@@ -74,8 +65,8 @@ class CFG:
     ratio2 = 1
     
     # ============== fold =============
-    segments = ['20231215151901','frag1']
-    valid_id = '20231215151901'#20231210132040'20231215151901
+    segments = ['frag5','s4']
+    valid_id = 'frag5'#20231210132040'20231215151901
     norm = False
     aug = None
     # ============== fixed =============
@@ -132,7 +123,7 @@ for batch in [12]:
     for lr in [2e-5]:
         for norm in [True]:
             for aug in ['fourth']:
-                for frags in [['20231210132040','frag5']]:  #'s4','omega',
+                for frags in [['frag5','s4']]:  #'s4','omega',
                     t=t+1
                     
                     CFG.norm = norm
@@ -206,7 +197,7 @@ for batch in [12]:
                         max_epochs=40,
                         accelerator="gpu",
                         check_val_every_n_epoch=4,
-                        devices=1,
+                        devices=-1,
                         logger=wandb_logger,
                         default_root_dir="./modelss",
                         accumulate_grad_batches=1,

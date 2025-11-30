@@ -61,6 +61,9 @@ import numpy as np
 from scipy.ndimage import zoom
 
 from pytorch_lightning.utilities import rank_zero_only
+import csv
+import os
+from datetime import datetime
 
 print = rank_zero_only(print)
 
@@ -94,15 +97,15 @@ class CFG:
     tile_size = 256
     stride = tile_size // 8
 
-    train_batch_size =  15
-    valid_batch_size = 30
+    train_batch_size =  4
+    valid_batch_size = 10
 
 
     scheduler = 'GradualWarmupSchedulerV2'
     
-    start_idx = 24
-    in_chans = 16
-    valid_chans = 16
+    start_idx = 6
+    in_chans = 53
+    valid_chans = 50
     
     epochs = 40 # 30
     lr = 2e-5
@@ -212,7 +215,7 @@ def read_image_mask(fragment_id, start_idx, in_chans):
     if fragment_id==CFG.valid_id:
 
         print('valid')
-        start_idx = int(start_idx+(CFG.in_chans-CFG.valid_chans)//2)-10
+        start_idx = int(start_idx+(CFG.in_chans-CFG.valid_chans)//2)
         end_idx = start_idx + CFG.valid_chans
         idxs = range(start_idx, end_idx)
         print(start_idx)
@@ -663,6 +666,44 @@ class RegressionPLModel(pl.LightningModule):
                 print(f"Precision: {precision:.4f}")
                 print(f"Recall: {recall:.4f}")
                 print(f"F1 Score: {f1:.4f}")
+                
+        # === Save metrics locally per experiment ===
+        if self.trainer.is_global_zero:
+            exp_dir = os.path.join(self.trainer.default_root_dir, "metrics")
+            os.makedirs(exp_dir, exist_ok=True)
+
+            csv_path = os.path.join(exp_dir, "metrics.csv")
+
+            # Prepare header if file does not exist
+            file_exists = os.path.isfile(csv_path)
+
+            with open(csv_path, "a", newline="") as f:
+                writer = csv.writer(f)
+                
+                # Write CSV header once
+                if not file_exists:
+                    writer.writerow([
+                        "timestamp",
+                        "epoch",
+                        "iou",
+                        "dice",
+                        "pixel_acc",
+                        "precision",
+                        "recall",
+                        "f1"
+                    ])
+
+                # Append this epoch’s metrics
+                writer.writerow([
+                    datetime.now().isoformat(),
+                    self.current_epoch,
+                    float(iou),
+                    float(dice),
+                    float(pixel_acc),
+                    float(precision),
+                    float(recall),
+                    float(f1)
+                ])
         
         # Log image only on master process
         if self.trainer.is_global_zero:
@@ -718,15 +759,27 @@ torch.set_float32_matmul_precision('medium')
 # for f in [['frag5','20231210132040'],['frag5','frag1','20231210132040']]:  #'s4','omega',
 for r1 in [2,1]:
     for a in [0.6,0.5]:
-        for r1 in [2,1]:
-            for f in [['frag5','20231210132040'],['frag5','frag1','20231210132040']]:  #'s4','omega',
+        for r1 in [5,15,22]:
+            if r1==22:
+                CFG.in_chans=18
+                CFG.valid_chans=16
+                CFG.start_idx=22
+            if r1==15:
+                CFG.in_chans=30
+                CFG.valid_chans=24
+                CFG.start_idx=15
+            if r1==5:
+                CFG.in_chans=54
+                CFG.valid_chans=50
+                CFG.start_idx=5
+            for f in [['rect5','remaining5']]:  #'s4','omega',
                 smooth = 0.25
                 norm = True
                 for ratio in [2,1]:
-                    CFG.valid_id = f[-1]
+                    CFG.valid_id = f[0]
                     CFG.frags = f
-                    CFG.ratio2 = 1#ratio
-                    CFG.ratio1 = 2#r1
+                    # CFG.ratio2 = 1#ratio
+                    # CFG.ratio1 = 2#r1
                     max = True
         
                     enc='resnet101'
@@ -785,17 +838,17 @@ for r1 in [2,1]:
 
                     wandb_logger.watch(model, log="all", log_freq=50)
                     trainer = pl.Trainer(
-                    max_epochs=15,
+                    max_epochs=25,
                     accelerator="gpu",
                     devices=-1,
                     check_val_every_n_epoch=4,
                     logger=wandb_logger,
                     default_root_dir="./models",
                     accumulate_grad_batches=1,
-                    precision='16-mixed',
+                    precision='16',
                     gradient_clip_val=1.0,
                     gradient_clip_algorithm="norm",
-                    strategy='ddp_find_unused_parameters_true',
+                    strategy='ddp',
                     callbacks=[ModelCheckpoint(filename=run_slug+f'_epoch='+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
                                 ],
                     )

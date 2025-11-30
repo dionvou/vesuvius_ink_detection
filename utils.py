@@ -206,8 +206,10 @@ class VideoDataset(Dataset):
         xyxys=None,
         labels=None,
         transform=None,
-        norm=False,
-        aug=None
+        norm=True,
+        aug='fourth',
+        out_chans=1,
+        scale_factor=8
     ):
         """
         images: tensor [N, C, H, W]  OR  list of images
@@ -228,15 +230,16 @@ class VideoDataset(Dataset):
         self.transform = transform
         self.xyxys = xyxys
         self.aug = aug
+        self.out_chans = out_chans
 
-        self.scale_factor = 16
+        self.scale_factor = scale_factor
         # ---------------------- #
         #   MAIN VIDEO TRANSFORM
         # ---------------------- #
         t_list = [T.ConvertImageDtype(torch.float32)]
 
         if norm:
-            out_ch = self.cfg.out_chans
+            out_ch = self.out_chans
 
             if out_ch == 3:
                 # Standard RGB ImageNet normalization
@@ -334,8 +337,8 @@ class VideoDataset(Dataset):
             image = torch.stack([self.video_transform(f) for f in image])
 
             # repeat channels if needed
-            if image.shape[1] != self.cfg.out_chans:
-                image = image.repeat(1, self.cfg.out_chans, 1, 1)
+            if image.shape[1] != self.out_chans:
+                image = image.repeat(1, self.out_chans, 1, 1)
 
             return image, label, xy
 
@@ -362,8 +365,8 @@ class VideoDataset(Dataset):
             image = torch.stack([self.video_transform(f) for f in image])
 
             # repeat channels
-            if image.shape[1] != self.cfg.out_chans:
-                image = image.repeat(1, self.cfg.out_chans, 1, 1)
+            if image.shape[1] != self.out_chans:
+                image = image.repeat(1, self.out_chans, 1, 1)
 
             return image, label
 

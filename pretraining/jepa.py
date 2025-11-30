@@ -71,9 +71,9 @@ class CFG:
     current_dir = '../'
     segment_path = './pretraining_scrolls/'
     
-    start_idx = 24
-    in_chans = 16
-    valid_chans = 8 # chans used 
+    start_idx = 15
+    in_chans = 30
+    valid_chans = 24 # chans used 
     
     size = 64
     tile_size = 64
@@ -128,7 +128,7 @@ class TileDataset(Dataset):
     def __init__(self, base_path, splits=["train"], transform=None):
         self.tile_paths = []
         for split in splits:
-            split_path = os.path.join(base_path, "64_tiles_s4", split)
+            split_path = os.path.join(base_path, "64_tiles", split)
             self.tile_paths += [
                 os.path.join(split_path, f) 
                 for f in os.listdir(split_path) if f.endswith(".npy")
@@ -230,14 +230,14 @@ class JEPAPretrain(pl.LightningModule):
     3. Target encoder (EMA) processes target patches  
     4. Predictor predicts target representations from context
     """
-    def __init__(self, lr=1e-4, mask_ratio=0.75, embed_dim=768, predictor_dim=512, predictor_layers=4, ema_tau=0.996):
+    def __init__(self, lr=1e-4, mask_ratio=0.75, embed_dim=768, predictor_dim=768, predictor_layers=4, ema_tau=0.996):
         super().__init__()
         self.save_hyperparameters()
         self.print_shape = False
         
         # Context encoder (trainable)
         config = TimesformerConfig(
-            num_frames=8,
+            num_frames=24,
             image_size=64,
             patch_size=8,
             num_channels=1,
@@ -511,30 +511,30 @@ class JEPAPretrain(pl.LightningModule):
 
         return [optimizer], [scheduler]
 
+if __name__ == "__main__":
+    # Training setup
+    torch.set_float32_matmul_precision('medium')
 
-# Training setup
-torch.set_float32_matmul_precision('medium')
+    checkpoint_callback = ModelCheckpoint(
+        dirpath="checkpoints_jepa",
+        filename="64_jepa_{epoch}",
+        save_top_k=-1,
+        every_n_epochs=1
+    )
 
-checkpoint_callback = ModelCheckpoint(
-    dirpath="checkpoints_jepa",
-    filename="64_jepa_{epoch}",
-    save_top_k=-1,
-    every_n_epochs=1
-)
+    model = JEPAPretrain(ema_tau=0.996)
 
-model = JEPAPretrain(ema_tau=0.996)
+    trainer = pl.Trainer(
+        max_epochs=100,
+        accelerator="auto",
+        devices=-1,
+        precision="16",
+        log_every_n_steps=20,
+        check_val_every_n_epoch=1,
+        gradient_clip_val=1.0,
+        gradient_clip_algorithm="norm",
+        callbacks=[checkpoint_callback],
+    )
 
-trainer = pl.Trainer(
-    max_epochs=100,
-    accelerator="auto",
-    devices=-1,
-    precision="16-mixed",
-    log_every_n_steps=20,
-    check_val_every_n_epoch=1,
-    gradient_clip_val=1.0,
-    gradient_clip_algorithm="norm",
-    callbacks=[checkpoint_callback],
-)
-
-trainer.validate(model, val_loader, verbose=True)
-trainer.fit(model, train_loader, val_loader)
+    trainer.validate(model, val_loader, verbose=True)
+    trainer.fit(model, train_loader, val_loader)

@@ -17,6 +17,12 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim import AdamW
 import wandb
 from scipy.ndimage import zoom
+import sys
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+sys.path.append(project_root)
+
+import models.vmae as vmae
 
 
 import traceback
@@ -206,8 +212,9 @@ class VideoDataset(Dataset):
         xyxys=None,
         labels=None,
         transform=None,
-        norm=False,
-        aug=None
+        norm=True,
+        aug='fourth',
+        out_chans=1,
     ):
         """
         images: tensor [N, C, H, W]  OR  list of images
@@ -228,6 +235,7 @@ class VideoDataset(Dataset):
         self.transform = transform
         self.xyxys = xyxys
         self.aug = aug
+        self.out_chans = out_chans
 
         self.scale_factor = 16
         # ---------------------- #
@@ -236,7 +244,7 @@ class VideoDataset(Dataset):
         t_list = [T.ConvertImageDtype(torch.float32)]
 
         if norm:
-            out_ch = self.cfg.out_chans
+            out_ch = self.out_chans
 
             if out_ch == 3:
                 # Standard RGB ImageNet normalization
@@ -334,8 +342,8 @@ class VideoDataset(Dataset):
             image = torch.stack([self.video_transform(f) for f in image])
 
             # repeat channels if needed
-            if image.shape[1] != self.cfg.out_chans:
-                image = image.repeat(1, self.cfg.out_chans, 1, 1)
+            if image.shape[1] != self.out_chans:
+                image = image.repeat(1, self.out_chans, 1, 1)
 
             return image, label, xy
 
@@ -362,8 +370,8 @@ class VideoDataset(Dataset):
             image = torch.stack([self.video_transform(f) for f in image])
 
             # repeat channels
-            if image.shape[1] != self.cfg.out_chans:
-                image = image.repeat(1, self.cfg.out_chans, 1, 1)
+            if image.shape[1] != self.out_chans:
+                image = image.repeat(1, self.out_chans, 1, 1)
 
             return image, label
 

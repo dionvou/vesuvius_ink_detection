@@ -42,9 +42,9 @@ class VideoMaeModel(pl.LightningModule):
   
         videomae_config = VideoMAEConfig(
             image_size=64,
-            patch_size=16,
+            patch_size=8,
             num_channels=1,
-            num_frames=16,
+            num_frames=24,
             tubelet_size=2,
             hidden_size=768,
             num_hidden_layers=12,
@@ -63,7 +63,7 @@ class VideoMaeModel(pl.LightningModule):
 
         try:
             ckpt = torch.load(
-                "pretraining/checkpoints/videomae_epoch=014_val_loss=0.4231.ckpt",
+                "checkpoints/videomae_epoch=063_val_loss=0.3684.ckpt",
                 map_location="cpu",
                 weights_only=False
             )
@@ -87,13 +87,13 @@ class VideoMaeModel(pl.LightningModule):
 
         # Remove classifier head, keep norm
         self.encoder.head = nn.Identity()
-        for param in self.encoder.parameters():
-            param.requires_grad = False
+        # for param in self.encoder.parameters():
+        #     param.requires_grad = False
     
         embed_dim = 768
 
         self.classifier = nn.Sequential(
-                nn.Linear(embed_dim,(self.hparams.size//16)**2),
+                nn.Linear(embed_dim,(self.hparams.size//8)**2),
         )
     # 
     def forward(self, x):
@@ -107,7 +107,7 @@ class VideoMaeModel(pl.LightningModule):
 
         # pass to classifier
         out = self.classifier(x_flat)
-        out = out.view(-1, 1, self.hparams.size // 16, self.hparams.size // 16)
+        out = out.view(-1, 1, self.hparams.size // 8, self.hparams.size // 8)
         return out
 
     def training_step(self, batch, batch_idx):
@@ -131,7 +131,7 @@ class VideoMaeModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=16,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=8,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)
@@ -148,7 +148,6 @@ class VideoMaeModel(pl.LightningModule):
         optimizer = AdamW(backbone_params, lr=base_lr, weight_decay=weight_decay)
 
         # 6 Scheduler
-
         return [optimizer]
 
 

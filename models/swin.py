@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import torch.distributed as dist
 
 from torch.utils.data import DataLoader, Dataset
-from transformers import AutoImageProcessor
+# from transformers import AutoImageProcessor
 import torchvision.transforms as T
 import numpy as np
 import random
@@ -21,9 +21,10 @@ from warmup_scheduler import GradualWarmupScheduler
 import utils
 
 from torchvision.models.video import swin_transformer
+#  torchvision.models.swin_transformer.SwinTransformer 
 import albumentations as A
-from transformers import VideoMAEConfig, VideoMAEForPreTraining
-from transformers import VideoMAEModel
+# from transformers import VideoMAEConfig, VideoMAEForPreTraining
+# from transformers import VideoMAEModel
 
 
 
@@ -36,7 +37,7 @@ class TimesformerDataset(Dataset):
         self.rotate = A.Compose([A.Rotate(8,p=1)])
         self.xyxys=xyxys
         self.aug = aug
-        self.scale_factor = 32
+        self.scale_factor = 16
         
         self.video_transform = T.Compose([
             T.ConvertImageDtype(torch.float32),  # scales to [0.0, 1.0]
@@ -1705,7 +1706,7 @@ class SwinModel(pl.LightningModule):
 
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
 
-        backbone = swin_transformer.swin3d_b(weights="KINETICS400_IMAGENET22K_V1")
+        backbone = swin_transformer.swin3d_t(weights="KINETICS400_V1")
 
         embed_dim = backbone.norm.normalized_shape[0]  # usually 1024 for swin3d_b
 
@@ -1749,7 +1750,7 @@ class SwinModel(pl.LightningModule):
         self.backbone = backbone
 
         self.classifier = nn.Sequential(
-                nn.Linear(embed_dim,(self.hparams.size//32)**2),
+                nn.Linear(embed_dim,(self.hparams.size//16)**2),
         )
     
     def forward(self, x):
@@ -1757,7 +1758,7 @@ class SwinModel(pl.LightningModule):
         x = x.permute(0,2,1,3,4)
         preds = self.backbone(x)  # runs backbone, sets self.feature
         preds = self.classifier(preds)
-        preds = preds.view(-1,1,self.hparams.size//32,self.hparams.size//32)
+        preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
         return preds
 
 # # import torch
@@ -3002,7 +3003,7 @@ class SwinModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=32,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=16,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)
