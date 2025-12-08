@@ -307,10 +307,10 @@ class VideoDataset(Dataset):
     def apply_aug(self, image):
         if self.aug == "fourth":
             return self.fourth_augment(image)
-        elif self.aug == "shuffle":
+        if self.aug == "shuffle":
             return self.shuffle_channels(image)
-        else:
-            return image
+        
+        return image
 
     # ------------------------------------------------------------ #
     #                      MAIN GETITEM

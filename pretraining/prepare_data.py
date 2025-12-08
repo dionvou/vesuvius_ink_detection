@@ -31,8 +31,8 @@ class CFG:
     # Change the size of fragments
     frags_ratio1 = ['frag','re']
     frags_ratio2 = ['202','s4','left']
-    ratio1 = 2
-    ratio2 = 2
+    ratio1 = 1
+    ratio2 = 1
     
     # ============== fold =============
     segments = ['20240304141531'] 

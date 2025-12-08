@@ -11,6 +11,7 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.plugins.io import TorchCheckpointIO
 from torch.utils.data import DataLoader, Dataset, random_split
 from torch.optim import AdamW
 from warmup_scheduler import GradualWarmupScheduler
@@ -22,32 +23,42 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = 933120000
 
 
+class CustomCheckpointIO(TorchCheckpointIO):
+    """Custom checkpoint I/O that uses weights_only=False for PyTorch 2.6+ compatibility"""
+
+    def load_checkpoint(self, path, map_location=None):
+        """Load checkpoint with weights_only=False since we trust our own checkpoints"""
+        return torch.load(path, map_location=map_location, weights_only=False)
+
 class CFG:
     """Centralized configuration"""
     # Paths
     current_dir = '../'
     segment_path = './pretraining_scrolls/'
-    
+
     # Model architecture
     start_idx = 22
     in_chans = 18
     valid_chans = 16
-    size = 64
-    tile_size = 64
-    
+    size = 224
+    tile_size = 224
+
     # Training hyperparameters
-    train_batch_size = 256  # Reduced for video processing
-    valid_batch_size = 256
+    train_batch_size = 128  # Reduced for video processing
+    valid_batch_size = 128
     lr = 1e-4
     epochs = 200
     warmup_epochs = 5
-    
+
+    # Checkpoint resumption
+    resume_from_checkpoint = None#'checkpoints/videomae_epoch=008_val_loss=0.5532.ckpt'  # Set to checkpoint path to resume training (e.g., 'checkpoints/videomae_epoch=008_val_loss=0.5532.ckpt')
+
     # Masking strategy
-    mask_ratio = 0.75  # VideoMAE typically uses high mask ratios (0.75-0.9)
-    
+    mask_ratio = 0.85 # VideoMAE typically uses high mask ratios (0.75-0.9)
+
     # VideoMAE Architecture
     image_size = size
-    patch_size = 8  # Spatial patch size
+    patch_size = 16  # Spatial patch size
     num_channels = 1  # VideoMAE expects 3 channels (RGB-like)
     input_channels = 1  # Our actual input channels (grayscale)
     hidden_size = 768  # Smaller for efficiency
@@ -58,17 +69,17 @@ class CFG:
     decoder_hidden_size = 512
     decoder_num_attention_heads = 8
     decoder_intermediate_size = 768
-    
+
     # Video dimensions
     input_frames = 16
     tubelet_size = 2  # Temporal patch size
-    
+
     # Optimizer
     weight_decay = 0.05
     max_grad_norm = 1.0
-    
+
     # Data
-    val_split = 0.0005
+    val_split = 0.005
     num_workers = 8
     seed = 42
     
@@ -110,7 +121,7 @@ class TileDataset(Dataset):
         self.tile_paths = []
         
         for split in splits:
-            split_path = Path(base_path) / "64_tiles" / split
+            split_path = Path(base_path) / "224_tiles" / split
             if split_path.exists():
                 self.tile_paths.extend([
                     str(p) for p in split_path.glob("*.npy")
@@ -591,13 +602,13 @@ def load_config_into_class(path, cfg_class):
 def main():
     """Main training function"""
     # Set seed for reproducibility
-    
+
     # In main(), after creating model:
     # set_seed(CFG.seed)
-    
+
     # Save config alongside checkpoints
     set_seed(CFG.seed)
-    
+
     # Create datasets
     full_dataset = TileDataset(
         CFG.segment_path,
@@ -653,7 +664,11 @@ def main():
     
     os.makedirs('checkpoints', exist_ok=True)
     save_config(CFG, 'checkpoints/config.json')
-    
+
+    # Create custom checkpoint I/O plugin for PyTorch 2.6+ compatibility
+    checkpoint_plugin = CustomCheckpointIO()
+
+    # Create trainer with custom checkpoint I/O
     trainer = pl.Trainer(
         max_epochs=CFG.epochs,
         accelerator="auto",
@@ -665,12 +680,18 @@ def main():
         gradient_clip_algorithm="norm",
         callbacks=[checkpoint_callback, lr_monitor],
         precision="16",  # Mixed precision training
-        deterministic=True
+        deterministic=True,
+        plugins=[checkpoint_plugin]
     )
-    
-    # Train
-    trainer.fit(model, train_loader, val_loader)
-    
+
+    # Start training - optionally resume from checkpoint
+    if CFG.resume_from_checkpoint:
+        print(f"Resuming training from checkpoint: {CFG.resume_from_checkpoint}")
+        trainer.fit(model, train_loader, val_loader, ckpt_path=CFG.resume_from_checkpoint)
+    else:
+        print("Starting training from scratch")
+        trainer.fit(model, train_loader, val_loader)
+
     print("Training completed!")
 
 

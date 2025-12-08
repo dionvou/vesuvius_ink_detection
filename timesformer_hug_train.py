@@ -68,13 +68,13 @@ class CFG:
     
     # Change the size of fragments
     
-    frags_ratio1 = ['frag','re']
+    frags_ratio1 = ['Frag','re']
     frags_ratio2 = ['202','s4','left']
     ratio1 = 2
     ratio2 = 2
     
     # ============== fold =============
-    segments = ['20231210132040','frag5'] 
+    segments = ['20231210132040','Frag5'] 
     valid_id = '20231210132040'#'20231210132040'#'20231215151901'
     # segments = ['rect1','remaining1'] 
     # valid_id = 'rect1'#20231210132040'20231215151901
@@ -189,10 +189,10 @@ trainer = pl.Trainer(
     logger=wandb_logger,
     default_root_dir="./modelss",
     accumulate_grad_batches=1,
-    precision='16-mixed',
+    precision='16',
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
-    strategy='ddp_find_unused_parameters_true',
+    strategy='ddp',
     callbacks=[ModelCheckpoint(filename=f'{run_slug}_'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
     ]
 

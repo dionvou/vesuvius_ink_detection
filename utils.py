@@ -105,8 +105,21 @@ def read_image_mask(fragment_id, CFG=None):
         if len(inklabel_files) > 0:
             mask = cv2.imread(inklabel_files[0], 0)
         else:
-            print(f"Creating empty mask for {fragment_id}")
-            mask = np.zeros(images[0].shape)
+            # print(f"Creating empty mask for {fragment_id}")
+            # mask = np.zeros(images.shape[:2])
+        
+            mask = np.zeros(images.shape[:2], dtype=np.uint8)
+
+            # # Build save path (same folder as images)
+            save_dir = f"{CFG.segment_path}/{fragment_id}"
+            # os.makedirs(save_dir, exist_ok=True)
+
+            save_path = os.path.join(save_dir, "{fragment_id}_inklabels.png")
+
+            # Save mask
+            cv2.imwrite(save_path, mask)
+            print(f"Saved empty mask to: {save_path}")
+
             
         mask =  cv2.resize(mask , image_shape, interpolation=cv2.INTER_AREA)
     
@@ -377,17 +390,6 @@ def get_transforms(data, cfg):
     elif data == 'valid':
         aug = A.Compose(cfg.valid_aug_list)
     return aug
-
-def mae_loss(pred, target, mask):
-    """
-    pred: (B, C, H, W) — model's reconstructed output
-    target: (B, C, H, W) — ground truth input image
-    mask: (B, 1, H, W) — binary mask, 1 where masked (loss applied), 0 where visible
-    """
-    loss = (pred - target) ** 2
-    loss = loss * mask  # apply mask to compute loss only on masked areas
-    return loss.sum() / mask.sum().clamp(min=1.0)  # prevent divide-by-zero
-    
     
 def set_seed(seed=None, cudnn_deterministic=True):
     if seed is None:

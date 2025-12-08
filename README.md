@@ -8,7 +8,7 @@ This project implements state-of-the-art computer vision models to identify ink 
 
 ### Key Features
 
-- **Multiple Model Architectures**: SWIN Transformer, VideoMAE, TimeSformer, 3D ResNet, I3D, UNETR
+- **Multiple Model Architectures**: SWIN Transformer, VideoMAE, TimeSformer, 3D ResNet
 - **Self-Supervised Pretraining**: MAE, VideoMAE, JEPA for learning from unlabeled scroll data
 - **Multi-Fragment Training**: Combines data from multiple scroll fragments for robust learning
 - **Advanced Augmentation**: Spatial, intensity, and channel-level augmentations
@@ -96,25 +96,114 @@ pandas
 
 ## Data Organization
 
+### Downloading Training Data
+
+The project includes an automated download script ([download.sh](download.sh)) to fetch Vesuvius Challenge data from the official repository.
+
+#### Quick Start
+
+```bash
+# Make the script executable
+chmod +x download.sh
+
+# Run the download script
+./download.sh
+```
+
+#### What Gets Downloaded
+
+The script downloads two types of data:
+
+**1. Fragment Data** (smaller pieces with known ink labels):
+- **Fragment 1** (`Frag1`): PHercParis2Fr47 scanned at 54keV with 3.24um resolution
+- **Fragment 5** (`Frag5`): PHerc1667Cr1Fr3 scanned at 70keV with 3.24um resolution
+
+**2. Full Scroll Data** (larger intact scrolls):
+- **Scroll 4** (`20231210132040`): PHerc1667 segment from full scroll
+
+For each dataset, the script downloads:
+- **Layer files**: CT scan slices (layers 15-45) in TIF/PNG format
+- **Auxiliary files**:
+  - `*_mask.png` - Fragment boundary masks
+  - `*_inklabels.png` - Ground truth ink annotations
+
+#### How It Works
+
+The download script uses two main functions:
+
+**`download_layers`**: Downloads a range of numbered layer files
+- Tries multiple file extensions (tif, png, jpg) until finding the correct format
+- Checks file existence before downloading to avoid errors
+- Downloads layers 15-45 by default (configurable)
+
+**`download_aux_files`**: Downloads mask and inklabels files
+- Searches directory listings for files ending in `mask` or `inklabels`
+- Handles unknown filename prefixes automatically
+- Renames files to standardized format: `{fragment_id}_{suffix}.{ext}`
+
+#### Download Structure
+
+Downloaded data is organized in `train_scrolls/`:
+
+```
+train_scrolls/
+├── Frag1/
+│   ├── layers/
+│   │   ├── 15.tif
+│   │   ├── 16.tif
+│   │   └── ... (through 45.tif)
+│   ├── Frag1_mask.png
+│   └── Frag1_inklabels.png
+├── Frag5/
+│   ├── layers/
+│   │   ├── 15.tif
+│   │   └── ...
+│   ├── Frag5_mask.png
+│   └── Frag5_inklabels.png
+└── 20231210132040/
+    ├── layers/
+    │   ├── 15.tif
+    │   └── ...
+    ├── 20231210132040_mask.png
+    └── 20231210132040_inklabels.png
+```
+
+#### Customization
+
+To download additional fragments, edit [download.sh](download.sh):
+
+```bash
+# Add new fragment
+fragments=("Frag1" "Frag2" "Frag3")  # Add to array
+
+# Change layer range
+download_layers "$layers_url" "$out_dir" 10 50 extensions1[@]  # Layers 10-50
+
+# Change file extensions to try
+extensions=(tif png jpg jpeg)
+```
+
+#### Authentication
+
+The script uses default public credentials for the Vesuvius Challenge data repository:
+- **Username**: `registeredusers`
+- **Password**: `only`
+
+These are publicly available credentials for accessing competition data.
+
+### Fragment Directory Structure
+
 Each fragment directory follows this structure:
 
 ```
 fragment_id/
 ├── layers/                      # Volumetric CT scan data
-│   ├── 22.tif                  # Individual depth layers
-│   ├── 23.tif
-│   └── ... (16-54 layers)
+│   ├── 15.tif                  # Individual depth layers
+│   ├── 16.tif
+│   └── ... (15-45 or more layers)
 ├── {fragment_id}_inklabels.png # Ground truth ink labels (binary mask)
 └── {fragment_id}_mask.png      # Fragment boundary mask
 ```
-
-### Available Fragments
-
-- `frag5` - Primary training fragment
-- `frag1`, `frag2`, `frag6` - Additional fragments
-- `s4`, `rect5`, `remaining5` - Segment variants
-- `20240304141530`, `20231215151901` - Timestamped fragments
-
 ## Quick Start
 
 ### Training SWIN Transformer (Recommended)
@@ -480,19 +569,20 @@ If you use this code in your research, please cite:
 
 ## Acknowledgments
 
+This repository is based on and adapted from the [villa ink-detection repository](https://github.com/ScrollPrize/villa/tree/main/ink-detection), which contains the **First Place Vesuvius Grand Prize solution**. The original repository is part of the First Place Grand Prize Submission to the Vesuvius Challenge 2023 from Youssef Nader, Luke Farritor, and Julian Schilliger.
+
 - Vesuvius Challenge organizers
-- PyTorch Lightning team
-- HuggingFace Transformers library
-- Albumentations library
+- Youssef Nader, Luke Farritor, and Julian Schilliger for their groundbreaking work
+- AWS resources were provided by the National Infrastructures for Research and Technology GRNET and funded by the EU Recovery and Resiliency Facility.
 
 ## Contact
 
-For questions or issues, please open a GitHub issue or contact [contact information].
+For questions or issues, please open a GitHub issue or contact voulgarakisdion@gmail.com .
 
 ---
 
 **Project Status**: Active Development
 
-**Last Updated**: 2024
+**Last Updated**: 2025
 
-**Contributors**: [List contributors]
+**Contributors**: 

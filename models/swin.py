@@ -37,7 +37,7 @@ class TimesformerDataset(Dataset):
         self.rotate = A.Compose([A.Rotate(8,p=1)])
         self.xyxys=xyxys
         self.aug = aug
-        self.scale_factor = 16
+        self.scale_factor = 8
         
         self.video_transform = T.Compose([
             T.ConvertImageDtype(torch.float32),  # scales to [0.0, 1.0]
@@ -1706,7 +1706,7 @@ class SwinModel(pl.LightningModule):
 
         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
 
-        backbone = swin_transformer.swin3d_t(weights="KINETICS400_V1")
+        backbone = swin_transformer.swin3d_t(weights=None)#(weights="KINETICS400_V1")
 
         embed_dim = backbone.norm.normalized_shape[0]  # usually 1024 for swin3d_b
 
@@ -2558,223 +2558,239 @@ class SwinModel(pl.LightningModule):
 #         return output
     
 
-##########################GOOOOOOD
+#########################GOOOOOOD
 
-# class PatchExpanding3D(nn.Module):
-#     """3D Patch Expanding Layer (inverse of patch merging)"""
-#     def __init__(self, dim, norm_layer=nn.LayerNorm):
-#         super().__init__()
-#         self.dim = dim
-#         self.expand = nn.Linear(dim, 2 * dim, bias=False)
-#         self.norm = norm_layer(dim // 2)
+class PatchExpanding3D(nn.Module):
+    """3D Patch Expanding Layer (inverse of patch merging)"""
+    def __init__(self, dim, norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.dim = dim
+        self.expand = nn.Linear(dim, 2 * dim, bias=False)
+        self.norm = norm_layer(dim // 2)
 
-#     def forward(self, x):
-#         """
-#         x: B, T, H, W, C
-#         """
-#         B, T, H, W, C = x.shape
-#         x = self.expand(x)  # B, T, H, W, 2*C
+    def forward(self, x):
+        """
+        x: B, T, H, W, C
+        """
+        B, T, H, W, C = x.shape
+        x = self.expand(x)  # B, T, H, W, 2*C
 
-#         # Rearrange to upsample spatially
-#         x = x.view(B, T, H, W, 2, 2, C // 2)
-#         x = x.permute(0, 1, 2, 4, 3, 5, 6).contiguous()  # B, T, H, 2, W, 2, C//2
-#         x = x.view(B, T, H * 2, W * 2, C // 2)
-#         x = self.norm(x)
-#         return x
+        # Rearrange to upsample spatially
+        x = x.view(B, T, H, W, 2, 2, C // 2)
+        x = x.permute(0, 1, 2, 4, 3, 5, 6).contiguous()  # B, T, H, 2, W, 2, C//2
+        x = x.view(B, T, H * 2, W * 2, C // 2)
+        x = self.norm(x)
+        return x
 
 
-# class SwinDecoderStage(nn.Module):
-#     """Decoder stage using Swin Transformer blocks from encoder"""
-#     def __init__(self, encoder_stage):
-#         super().__init__()
-#         # Clone the encoder stage blocks
-#         self.blocks = nn.Sequential(*[block for block in encoder_stage])
+class SwinDecoderStage(nn.Module):
+    """Decoder stage using Swin Transformer blocks from encoder"""
+    def __init__(self, encoder_stage):
+        super().__init__()
+        # Clone the encoder stage blocks
+        self.blocks = nn.Sequential(*[block for block in encoder_stage])
     
-#     def forward(self, x):
-#         return self.blocks(x)
+    def forward(self, x):
+        return self.blocks(x)
 
 
-# class Swin3DEncoder(nn.Module):
-#     """Encapsulated Swin3D encoder with 1-channel input support"""
-#     def __init__(self, pretrained_ckpt='pretraining/checkpoints/tiny_epoch=70.ckpt', in_chans=1):
-#         super().__init__()
-#         # Load Swin3D backbone
-#         self.backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
+class Swin3DEncoder(nn.Module):
+    """Encapsulated Swin3D encoder with 1-channel input support"""
+    def __init__(self, pretrained_ckpt='pretraining/checkpoints/tiny_epoch=70.ckpt', in_chans=1):
+        super().__init__()
+        # Load Swin3D backbone
+        self.backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
+        # self/backbone = swin_transformer.SwinTransformer3d(
+        #     patch_size=[2, 4, 4],      # temporal=2, spatial=4x4 patches
+        #     embed_dim=192,              # base dimension
+        #     depths=[2, 2, 12],       # Tiny config
+        #     num_heads=[3, 6, 12],  # heads per stage
+        #     window_size=[8, 7, 7],     # attention window
+        #     stochastic_depth_prob=0.1, # DropPath
+        # )
 
-#         # --- patch_embed adaptation for 1 channel ---
-#         old_conv = self.backbone.patch_embed.proj
-#         weight = old_conv.weight.sum(dim=1, keepdim=True)  # [128, 1, 2, 4, 4]
-#         bias = old_conv.bias
+        # --- patch_embed adaptation for 1 channel ---
+        old_conv = self.backbone.patch_embed.proj
+        weight = old_conv.weight.sum(dim=1, keepdim=True)  # [128, 1, 2, 4, 4]
+        bias = old_conv.bias
 
-#         self.backbone.patch_embed.proj = nn.Conv3d(
-#             in_channels=in_chans,
-#             out_channels=old_conv.out_channels,
-#             kernel_size=old_conv.kernel_size,
-#             stride=old_conv.stride,
-#             bias=True
-#         )
-#         self.backbone.patch_embed.proj.weight = nn.Parameter(weight)
-#         self.backbone.patch_embed.proj.bias = nn.Parameter(bias.clone())
+        self.backbone.patch_embed.proj = nn.Conv3d(
+            in_channels=in_chans,
+            out_channels=old_conv.out_channels,
+            kernel_size=old_conv.kernel_size,
+            stride=old_conv.stride,
+            bias=True
+        )
+        self.backbone.patch_embed.proj.weight = nn.Parameter(weight)
+        self.backbone.patch_embed.proj.bias = nn.Parameter(bias.clone())
 
-#         # Remove classifier head, keep norm
-#         self.backbone.head = nn.Identity()
+        # Remove classifier head, keep norm
+        self.backbone.head = nn.Identity()
 
-#     def forward(self, x):
-#         x = self.backbone.patch_embed(x)   # (B, T/2, H/4, W/4, 96)
-#         x = self.backbone.pos_drop(x)
+    def forward(self, x):
+        x = self.backbone.patch_embed(x)   # (B, T/2, H/4, W/4, 96)
+        x = self.backbone.pos_drop(x)
 
-#         skips = []
-#         # backbone.features = [stage0, PatchMerging, stage1, PatchMerging, stage2, PatchMerging, stage3]
-#         for block in self.backbone.features:
-#             x = block(x)
-#             if isinstance(block, nn.Sequential):  # stage output
-#                 skips.append(x)
+        skips = []
+        # backbone.features = [stage0, PatchMerging, stage1, PatchMerging, stage2, PatchMerging, stage3]
+        for block in self.backbone.features:
+            x = block(x)
+            if isinstance(block, nn.Sequential):  # stage output
+                skips.append(x)
 
-#         return skips  # [stage0, stage1, stage2, stage3]
+        return skips  # [stage0, stage1, stage2, stage3]
 
 
-# class SwinUNet3D(nn.Module):
-#     """Swin-UNet architecture adapted for 3D input (using Swin3D blocks in decoder)"""
-#     def __init__(self, num_classes=1, embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24]):
-#         super().__init__()
-#         self.num_classes = num_classes
+class SwinUNet3D(nn.Module):
+    """Swin-UNet architecture adapted for 3D input (using Swin3D blocks in decoder)"""
+    def __init__(self, num_classes=1, embed_dim=96, depths=[2, 2, 2, 2], num_heads=[3, 6, 12, 24]):
+        super().__init__()
+        self.num_classes = num_classes
 
-#         # ===== ENCODER =====
-#         self.encoder = Swin3DEncoder(in_chans=1)
+        # ===== ENCODER =====
+        self.encoder = Swin3DEncoder(in_chans=1)
 
-#         # Feature dimensions from Swin3D-tiny
-#         self.dims = [96, 192, 384, 768]
+        # Feature dimensions from Swin3D-tiny
+        self.dims = [96, 192, 384, 768]
 
-#         # Extract encoder stages for reuse in decoder
-#         encoder_stages = []
-#         for block in self.encoder.backbone.features:
-#             if isinstance(block, nn.Sequential):
-#                 encoder_stages.append(block)
+        # Extract encoder stages for reuse in decoder
+        encoder_stages = []
+        for block in self.encoder.backbone.features:
+            if isinstance(block, nn.Sequential):
+                encoder_stages.append(block)
         
-#         # ===== DECODER (Patch Expanding + Swin Transformer Blocks) =====
-#         self.decoder1_expand = PatchExpanding3D(dim=self.dims[3])
-#         self.decoder1_swin = SwinDecoderStage(encoder_stages[2])  # stage2 blocks
+        # ===== DECODER (Patch Expanding + Swin Transformer Blocks) =====
+        self.decoder1_expand = PatchExpanding3D(dim=self.dims[3])
+        self.decoder1_swin = SwinDecoderStage(encoder_stages[2])  # stage2 blocks
 
-#         self.decoder2_expand = PatchExpanding3D(dim=self.dims[2])
-#         self.decoder2_swin = SwinDecoderStage(encoder_stages[1])  # stage1 blocks
+        self.decoder2_expand = PatchExpanding3D(dim=self.dims[2])
+        self.decoder2_swin = SwinDecoderStage(encoder_stages[1])  # stage1 blocks
 
-#         self.decoder3_expand = PatchExpanding3D(dim=self.dims[1])
-#         self.decoder3_swin = SwinDecoderStage(encoder_stages[0])  # stage0 blocks
+        self.decoder3_expand = PatchExpanding3D(dim=self.dims[1])
+        self.decoder3_swin = SwinDecoderStage(encoder_stages[0])  # stage0 blocks
 
-#         # ===== SEGMENTATION HEAD (Transformer-based) =====
-#         final_dim = self.dims[0]  # 96
-#         self.segmentation_head = nn.Sequential(
-#             nn.LayerNorm(final_dim),
-#             nn.Linear(final_dim, final_dim),
-#             nn.GELU(),
-#             nn.Linear(final_dim, num_classes)
-#         )
+        # ===== SEGMENTATION HEAD (Transformer-based) =====
+        final_dim = self.dims[1]  # 96
+        self.segmentation_head = nn.Sequential(
+            nn.LayerNorm(final_dim),
+            nn.Linear(final_dim, final_dim),
+            nn.GELU(),
+            nn.Linear(final_dim, num_classes)
+        )
+        # self.segmentation_head = TransformerSegmentationHead(
+        #     dim=final_dim,
+        #     num_classes=num_classes,
+        #     depth=3,
+        #     num_heads=4,
+        #     mlp_ratio=4.0
+        # )
 
-#     def forward(self, x):
-#         B, C, T, H, W = x.shape
 
-#         # ===== ENCODER =====
-#         skips = self.encoder(x)  # [stage0, stage1, stage2, stage3]
-#         x = skips[-1]  # bottleneck
+    def forward(self, x):
+        B, C, T, H, W = x.shape
 
-#         # ===== DECODER =====
-#         # stage3 (768) -> stage2 (384)
-#         x = self.decoder1_expand(x)
-#         x = x + skips[2]
-#         x = self.decoder1_swin(x)
+        # ===== ENCODER =====
+        skips = self.encoder(x)  # [stage0, stage1, stage2, stage3]
+        x = skips[-1]  # bottleneck
 
-#         # stage2 (384) -> stage1 (192)
-#         x = self.decoder2_expand(x)
-#         x = x + skips[1]
-#         x = self.decoder2_swin(x)
+        # ===== DECODER =====
+        # stage3 (768) -> stage2 (384)
+        x = self.decoder1_expand(x)
+        x = x + skips[2]
+        x = self.decoder1_swin(x)
 
-#         # stage1 (192) -> stage0 (96)
-#         x = self.decoder3_expand(x)
-#         x = x + skips[0]
-#         x = self.decoder3_swin(x)
+        # stage2 (384) -> stage1 (192)
+        x = self.decoder2_expand(x)
+        x = x + skips[1]
+        x = self.decoder2_swin(x)
 
-#         # No final expand - output at 1/4 resolution
-#         # x shape: B, T, H/4, W/4, 96
+        # # stage1 (192) -> stage0 (96)
+        # x = self.decoder3_expand(x)
+        # x = x + skips[0]
+        # x = self.decoder3_swin(x)
 
-#         # ===== 3D → 2D =====
-#         # Temporal average: B, T, H, W, C -> B, H, W, C
-#         x = x.mean(dim=1)
+        # No final expand - output at 1/4 resolution
+        # x shape: B, T, H/4, W/4, 96
 
-#         # ===== SEGMENTATION HEAD =====
-#         # Apply per-pixel classification
-#         B, H, W, C = x.shape
-#         x = x.view(B * H * W, C)
-#         out = self.segmentation_head(x)
-#         out = out.view(B, H, W, self.num_classes)
-#         out = out.permute(0, 3, 1, 2)  # B, num_classes, H, W
+        # ===== 3D → 2D =====
+        # Temporal average: B, T, H, W, C -> B, H, W, C
+        x = x.mean(dim=1)
+
+        # ===== SEGMENTATION HEAD =====
+        # Apply per-pixel classification
+        B, H, W, C = x.shape
+        x = x.view(B * H * W, C)
+        out = self.segmentation_head(x)
+        out = out.view(B, H, W, self.num_classes)
+        out = out.permute(0, 3, 1, 2)  # B, num_classes, H, W
+
+        return out
+
+
+class SwinModel(pl.LightningModule):
+    def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False, 
+                 checkpoint_path=None, load_encoder_only=False):
+        super().__init__()
+        self.save_hyperparameters()
+        self.mask_pred = np.zeros(self.hparams.pred_shape)
+        self.mask_count = np.zeros(self.hparams.pred_shape)
+        self.IGNORE_INDEX = 127
+
+        # Losses
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary', ignore_index=self.IGNORE_INDEX)
+        self.loss_func2 = smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.15, ignore_index=self.IGNORE_INDEX)
+        self.loss_func = lambda x, y: 0.5 * self.loss_func1(x, y) + 0.5 * self.loss_func2(x, y)
+
+        # Swin-Unet 3D backbone
+        self.backbone = SwinUNet3D(
+            num_classes=1,
+            embed_dim=96,
+            depths=[2, 2, 2, 2],
+            num_heads=[3, 6, 12, 24]
+        )
+        # checkpoint_path = 'pretraining/checkpoints/tiny_epoch=71.ckpt'
+        # Load pretrained weights if provided
+        if checkpoint_path:
+            self.load_pretrained_weights(checkpoint_path, load_encoder_only)
+
+        if freeze:
+            self._freeze_encoder()
+
+    def load_pretrained_weights(self, checkpoint_path, encoder_only=False):
+        """Load pretrained weights from checkpoint"""
+        print(f"Loading weights from {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location='cpu',weights_only=False)
         
-#         return out
-
-
-# class SwinModel(pl.LightningModule):
-#     def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False, 
-#                  checkpoint_path=None, load_encoder_only=False):
-#         super().__init__()
-#         self.save_hyperparameters()
-#         self.mask_pred = np.zeros(self.hparams.pred_shape)
-#         self.mask_count = np.zeros(self.hparams.pred_shape)
-#         self.IGNORE_INDEX = 127
-
-#         # Losses
-#         self.loss_func1 = smp.losses.DiceLoss(mode='binary', ignore_index=self.IGNORE_INDEX)
-#         self.loss_func2 = smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.15, ignore_index=self.IGNORE_INDEX)
-#         self.loss_func = lambda x, y: 0.5 * self.loss_func1(x, y) + 0.5 * self.loss_func2(x, y)
-
-#         # Swin-Unet 3D backbone
-#         self.backbone = SwinUNet3D(
-#             num_classes=1,
-#             embed_dim=96,
-#             depths=[2, 2, 2, 2],
-#             num_heads=[3, 6, 12, 24]
-#         )
-#         # checkpoint_path = 'pretraining/checkpoints/tiny_epoch=71.ckpt'
-#         # Load pretrained weights if provided
-#         if checkpoint_path:
-#             self.load_pretrained_weights(checkpoint_path, load_encoder_only)
-
-#         if freeze:
-#             self._freeze_encoder()
-
-#     def load_pretrained_weights(self, checkpoint_path, encoder_only=False):
-#         """Load pretrained weights from checkpoint"""
-#         print(f"Loading weights from {checkpoint_path}")
-#         checkpoint = torch.load(checkpoint_path, map_location='cpu',weights_only=False)
+        # Handle different checkpoint formats
+        if 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        else:
+            state_dict = checkpoint
         
-#         # Handle different checkpoint formats
-#         if 'state_dict' in checkpoint:
-#             state_dict = checkpoint['state_dict']
-#         else:
-#             state_dict = checkpoint
-        
-#         if encoder_only:
-#             # Load only encoder weights
-#             encoder_state = {k.replace('backbone.encoder.', ''): v 
-#                            for k, v in state_dict.items() 
-#                            if k.startswith('backbone.encoder.')}
-#             self.backbone.encoder.load_state_dict(encoder_state, strict=False)
-#             print(f"Loaded encoder weights only ({len(encoder_state)} keys)")
-#         else:
-#             # Load full model weights
-#             self.load_state_dict(state_dict, strict=False)
-#             print(f"Loaded full model weights ({len(state_dict)} keys)")
+        if encoder_only:
+            # Load only encoder weights
+            encoder_state = {k.replace('backbone.encoder.', ''): v 
+                           for k, v in state_dict.items() 
+                           if k.startswith('backbone.encoder.')}
+            self.backbone.encoder.load_state_dict(encoder_state, strict=False)
+            print(f"Loaded encoder weights only ({len(encoder_state)} keys)")
+        else:
+            # Load full model weights
+            self.load_state_dict(state_dict, strict=False)
+            print(f"Loaded full model weights ({len(state_dict)} keys)")
 
-#     def _freeze_encoder(self):
-#         """Freeze encoder parameters"""
-#         for param in self.backbone.encoder.parameters():
-#             param.requires_grad = False
-#         print("Encoder frozen")
+    def _freeze_encoder(self):
+        """Freeze encoder parameters"""
+        for param in self.backbone.encoder.parameters():
+            param.requires_grad = False
+        print("Encoder frozen")
 
     
-#     def forward(self, x):
-#         # x shape: [B, C, T, H, W] where C=1 (single channel)
-#         x = x.permute(0, 2, 1, 3, 4)  # Change to [B, T, C, H, W] for Swin3D
-#         output = self.backbone(x)
-#         return output
+    def forward(self, x):
+        # x shape: [B, C, T, H, W] where C=1 (single channel)
+        x = x.permute(0, 2, 1, 3, 4)  # Change to [B, T, C, H, W] for Swin3D
+        output = self.backbone(x)
+        return output
 
    
 # # GOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD  
@@ -2866,119 +2882,19 @@ class SwinModel(pl.LightningModule):
 
 
 #         self.classifier = nn.Sequential(
-#                 nn.Linear(embed_dim,(self.hparams.size//16)**2),
+#                 nn.Linear(embed_dim,(self.hparams.size//8)**2),
 #         )
 #     # 
 #     def forward(self, x):
 
 #         x = x.permute(0,2,1,3,4)
 #         preds = self.backbone(x)  # runs backbone, sets self.feature
+#         print(preds.shape)
 #         preds = self.classifier(preds)
-#         preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
+#         preds = preds.view(-1,1,self.hparams.size//8,self.hparams.size//8)
 #         return preds
     
-#     # mAEEEEEEEEEEEEEEEE  
-# class SwinModel(pl.LightningModule):
-#     def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
-#         super(SwinModel, self).__init__()
 
-#         self.save_hyperparameters()
-#         self.mask_pred = np.zeros(self.hparams.pred_shape)
-#         self.mask_count = np.zeros(self.hparams.pred_shape)
-#         self.IGNORE_INDEX = 127
-
-#         self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
-#         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
-
-#         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
-
-  
-#         videomae_config = VideoMAEConfig(
-#             image_size=64,
-#             patch_size=16,
-#             num_channels=1,
-#             num_frames=16,
-#             tubelet_size=2,
-
-#             hidden_size=768,
-#             num_hidden_layers=12,
-#             num_attention_heads=12,
-#             intermediate_size=1536,
-
-#             decoder_num_hidden_layers=4,
-#             decoder_hidden_size=512,
-#             decoder_num_attention_heads=8,
-#             decoder_intermediate_size=768,
-
-#             norm_pix_loss=True,
-#         )
-#         # self.encoder = VideoMAEModel(videomae_config)
-        
-#         # # state = torch.load("videomae_epoch=014_val_loss=0.4231.ckpt", map_location="cpu")
-#         # # self.encoder.load_state_dict(state)
-#         # ckpt = torch.load("pretraining/checkpoints/videomae_epoch=014_val_loss=0.4231.ckpt", map_location="cpu",weights_only=False)
-#         # state_dict = ckpt["state_dict"]
-
-#         # encoder_state = {k.replace("encoder.", ""): v 
-#         #                 for k, v in state_dict.items() if k.startswith("encoder.")}
-
-#         # # videomae = VideoMAEModel(videomae_config)
-#         # self.encoder.load_state_dict(encoder_state, strict=False)
-#         self.encoder = VideoMAEModel(videomae_config)
-
-#         try:
-#             ckpt = torch.load(
-#                 "pretraining/checkpoints/videomae_epoch=014_val_loss=0.4231.ckpt",
-#                 map_location="cpu",
-#                 weights_only=False
-#             )
-#             state_dict = ckpt["state_dict"]
-
-#             # Extract only the encoder weights from the Lightning checkpoint
-#             encoder_state = {}
-#             for k, v in state_dict.items():
-#                 if k.startswith("videomae.videomae"):  # your encoder path inside LightningModule
-#                     new_k = k.replace("videomae.videomae.", "")  # strip the prefix
-#                     encoder_state[new_k] = v
-
-#             # Load into your fresh VideoMAEModel
-#             self.encoder.load_state_dict(encoder_state, strict=False)
-#             print("✅ VideoMAE checkpoint loaded successfully!")
-
-#         except Exception as e:
-#             print("❌ Failed to load checkpoint:")
-#             print(e)
-
-
-#         # Remove classifier head, keep norm
-#         self.encoder.head = nn.Identity()
-    
-#         embed_dim = 768
-
-#         self.classifier = nn.Sequential(
-#                 nn.Linear(embed_dim,(self.hparams.size//16)**2),
-#         )
-#     # 
-#     def forward(self, x):
-#         # print(x.shape)
-#         # # x = x.permute(0,2,1,3,4)
-#         # preds = self.encoder(x)  # runs backbone, sets self.feature
-#         # preds = self.classifier(preds)
-#         # preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
-#         # return preds
-#         # x: (B, C, T, H, W)
-#         features = self.encoder(x)  # BaseModelOutput
-#         tokens = features.last_hidden_state  # (B, N, D)
-
-#         # Optionally, flatten tokens for Linear classifier
-#         B, N, D = tokens.shape
-#         x_flat = tokens.mean(dim=1)  # simple: mean pooling over patches
-#         # now x_flat shape: (B, D)
-
-#         # pass to classifier
-#         out = self.classifier(x_flat)
-#         out = out.view(-1, 1, self.hparams.size // 16, self.hparams.size // 16)
-#         return out
 
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -2996,14 +2912,12 @@ class SwinModel(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x,y,xyxys= batch
-        
         outputs = self(x)
-        # print(outputs.shape)
-        # print(y.shape)
+
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=16,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=8,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)
@@ -3020,10 +2934,7 @@ class SwinModel(pl.LightningModule):
         optimizer = AdamW(backbone_params, lr=base_lr, weight_decay=weight_decay)
 
         # 6 Scheduler
-
         return [optimizer]
-
-
 
     def on_validation_epoch_end(self):
         mask_pred_tensor = torch.tensor(self.mask_pred, dtype=torch.float32, device=self.device)

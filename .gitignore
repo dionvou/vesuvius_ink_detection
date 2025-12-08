@@ -268,3 +268,5 @@ pseudo_/
 pseudo_1/
 lightning_logs/
 pretraining_scrolls/
+pretraining/checkpoints_swin/
+pretraining/checkpoints_vjepa/

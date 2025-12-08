@@ -41,8 +41,8 @@ class VideoMaeModel(pl.LightningModule):
 
   
         videomae_config = VideoMAEConfig(
-            image_size=64,
-            patch_size=8,
+            image_size=224,
+            patch_size=16,
             num_channels=1,
             num_frames=24,
             tubelet_size=2,
@@ -63,7 +63,7 @@ class VideoMaeModel(pl.LightningModule):
 
         try:
             ckpt = torch.load(
-                "checkpoints/videomae_epoch=063_val_loss=0.3684.ckpt",
+                'checkpoints/videomae_epoch=035_val_loss=0.4559.ckpt',
                 map_location="cpu",
                 weights_only=False
             )
@@ -100,16 +100,20 @@ class VideoMaeModel(pl.LightningModule):
         features = self.encoder(x)  # BaseModelOutput
         tokens = features.last_hidden_state  # (B, N, D)
 
-        # Optionally, flatten tokens for Linear classifier
-        B, N, D = tokens.shape
-        x_flat = tokens.mean(dim=1)  # simple: mean pooling over patches
-        # now x_flat shape: (B, D)
+        # # Optionally, flatten tokens for Linear classifier
+        # B, N, D = tokens.shape
+        # x_flat = tokens.mean(dim=1)  # simple: mean pooling over patches
+        # # now x_flat shape: (B, D)
 
-        # pass to classifier
-        out = self.classifier(x_flat)
+        # # pass to classifier
+        # out = self.classifier(x_flat)
+        # out = out.view(-1, 1, self.hparams.size // 8, self.hparams.size // 8)
+        # return out
+        cls = tokens[:, 0]   
+        out = self.classifier(cls)
         out = out.view(-1, 1, self.hparams.size // 8, self.hparams.size // 8)
         return out
-
+        
     def training_step(self, batch, batch_idx):
         x, y = batch
         outputs = self(x)

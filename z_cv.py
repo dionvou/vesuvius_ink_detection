@@ -87,25 +87,25 @@ class CFG:
     valid_id = '20231210132040'#'20240304141530'#'20231210132040',20240716140050
     
     # Change the size of fragments2
-    frags_ratio1 = ['frag','re','f','g']
+    frags_ratio1 = ['Frag','re','f','g']
     frags_ratio2 = ['s4','202','alpha','omega']
     ratio1 = 2
-    ratio2 = 2
+    ratio2 = 1
     backbone='resnet3d'
     # ============== training cfg =============
     size = 256
     tile_size = 256
     stride = tile_size // 8
 
-    train_batch_size =  4
-    valid_batch_size = 10
+    train_batch_size =  15
+    valid_batch_size = 40
 
 
     scheduler = 'GradualWarmupSchedulerV2'
     
-    start_idx = 6
-    in_chans = 53
-    valid_chans = 50
+    start_idx = 20
+    in_chans = 20
+    valid_chans = 20
     
     epochs = 40 # 30
     lr = 2e-5
@@ -760,19 +760,19 @@ torch.set_float32_matmul_precision('medium')
 for r1 in [2,1]:
     for a in [0.6,0.5]:
         for r1 in [5,15,22]:
-            if r1==22:
-                CFG.in_chans=18
-                CFG.valid_chans=16
-                CFG.start_idx=22
-            if r1==15:
-                CFG.in_chans=30
-                CFG.valid_chans=24
-                CFG.start_idx=15
-            if r1==5:
-                CFG.in_chans=54
-                CFG.valid_chans=50
-                CFG.start_idx=5
-            for f in [['rect5','remaining5']]:  #'s4','omega',
+            # if r1==22:
+            #     CFG.in_chans=18
+            #     CFG.valid_chans=16
+            #     CFG.start_idx=22
+            # if r1==15:
+            #     CFG.in_chans=30
+            #     CFG.valid_chans=24
+            #     CFG.start_idx=15
+            # if r1==5:
+            #     CFG.in_chans=54
+            #     CFG.valid_chans=50
+            #     CFG.start_idx=5
+            for f in [['20231210132040','Frag5','Frag1']]:  #'s4','omega',
                 smooth = 0.25
                 norm = True
                 for ratio in [2,1]:
@@ -784,7 +784,9 @@ for r1 in [2,1]:
         
                     enc='resnet101'
                     fragment_id = CFG.valid_id
-                    valid_mask_gt = cv2.imread(f"train_scrolls/{fragment_id}/{fragment_id}_inklabels.png", 0)
+                    valid_mask_gt = cv2.imread(f"train_scrolls/{fragment_id}/layers/32.tif", 0)
+
+                    # valid_mask_gt = cv2.imread(f"train_scrolls/{fragment_id}/{fragment_id}_inklabels.png", 0)
 
                     if any(sub in fragment_id for sub in CFG.frags_ratio1):
                         scale = 1 / CFG.ratio1

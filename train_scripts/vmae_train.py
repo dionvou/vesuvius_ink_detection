@@ -25,16 +25,16 @@ class CFG:
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 15
-    in_chans = 30
+    start_idx = 18
+    in_chans = 24
     valid_chans = 24
     
-    size = 64
-    tile_size = 256
-    stride = tile_size // 16
+    size = 224
+    tile_size = 224
+    stride = tile_size // 8
 
-    train_batch_size = 50
-    valid_batch_size = 100   
+    train_batch_size = 10
+    valid_batch_size = 10   
     lr = 5e-5
     # ============== model cfg =============
     scheduler = 'cosine'
@@ -44,10 +44,10 @@ class CFG:
     frags_ratio1 = ['frag','re']
     frags_ratio2 = ['s4','202','left']
     ratio1 = 2
-    ratio2 = 1
+    ratio2 = 2
     
     # ============== fold =============
-    segments = ['remaining5','rect5']#,'frag4','frag3','frag2','frag1']
+    segments = ['rect5','remaining5']#['Frag5','20231210132040']#,'frag4','frag3','frag2','frag1']
     valid_id = 'rect5'#20231210132040'20231215151901
     norm = False
     aug = None
@@ -104,8 +104,7 @@ torch.set_float32_matmul_precision('medium')
 fragment_id = CFG.valid_id
 run_slug=f'_VIDEOMAE_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.valid_chans},norm={CFG.norm},fourth={CFG.aug}'
 
-# Read mask and resize to match the output resolution
-valid_mask_gt = cv2.imread(f"{CFG.segment_path}{fragment_id}/{fragment_id}_inklabels.png", 0)
+valid_mask_gt = cv2.imread(f"{CFG.segment_path}{fragment_id}/layers/32.tif", 0)
 if any(sub in fragment_id for sub in CFG.frags_ratio1):
     scale = 1 / CFG.ratio1
     new_w = int(valid_mask_gt.shape[1] * scale)
@@ -117,7 +116,6 @@ elif any(sub in fragment_id for sub in CFG.frags_ratio2):
     new_w = int(valid_mask_gt.shape[1] * scale)
     new_h = int(valid_mask_gt.shape[0] * scale)
     valid_mask_gt = cv2.resize(valid_mask_gt, (new_w, new_h), interpolation=cv2.INTER_AREA)
-
 
 pad0 = (CFG.size - valid_mask_gt.shape[0] % CFG.size) % CFG.size
 pad1 = (CFG.size - valid_mask_gt.shape[1] % CFG.size) % CFG.size
@@ -164,7 +162,8 @@ trainer = pl.Trainer(
     precision='16',
     gradient_clip_val=1.0,
     gradient_clip_algorithm="norm",
-    strategy='ddp',
+    strategy="ddp_find_unused_parameters_false",
+
     # callbacks=[ModelCheckpoint(filename=f'{run_slug}_'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
     # ]
 

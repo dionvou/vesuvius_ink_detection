@@ -1,174 +1,23 @@
-# # #!/bin/bash
-
-# # USER="registeredusers"
-# # PASS="only"
-
-# # # List your fragment base names here
-# # # fragments=("20240304161941-20240304144031-20240304141531-20231210132040")
-# # # fragments=("20230620230619")
-# # fragments=("20231215151901")
-
-# # for frag in "${fragments[@]}"; do
-# #     # Base URL
-# #     # base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/thaumato_outputs/scroll4_thaumato_mar17/working/${frag}"
-# #     # base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/${frag}"
-# #     # base_url="https://dl.ash2txt.org/full-scrolls/Scroll3/PHerc332.volpkg/paths/${frag}"
-# #     base_url="https://dl.ash2txt.org/community-uploads/luke/youssef_uploads/scroll_4/${frag}"
-# #     layers_url="${base_url}/layers/"
-
-# #     # Create output directory
-# #     out_dir="./train_scrolls/${frag}/layers/"
-# #     mkdir -p "$out_dir"
- 
-# #     # Download specific .tif files from x to y slice
-# #     for i in $(seq -w 14 47); do
-# #         wget --user=$USER --password=$PASS \
-# #             -P "$out_dir" \
-# #             "${layers_url}${i}.tif"
-# #     done
-
-# #     # Download masks
-# #     wget --user=$USER --password=$PASS \
-# #         -P ./train_scrolls/${frag}/ \
-# #         ${base_url}/${frag}_inklabels.png
-
-# #     wget --user=$USER --password=$PASS \
-# #         -P ./train_scrolls/${frag}/ \
-# #         ${base_url}/${frag}_mask.png
-# # done
-
-# # # #!/bin/bash
-
-# # # USER="registeredusers"
-# # # PASS="only"
-
-# # # # List your fragment base names here
-# # # fragments=("20231122192640")
-
-# # # for frag in "${fragments[@]}"; do
-# # #     # Base URL
-# # #     base_url="https://dl.ash2txt.org/fragments/${frag}/"
-    
-
-# # #     # Download layers
-# # #     wget --no-parent -r --user=$USER --password=$PASS \
-# # #         -P ./train_scrolls/${frag}/layers/ \
-# # #         --cut-dirs=6 -nH \
-# # #         ${base_url}/layers/
-
-# # #     # Download masks
-# # #     wget --user=$USER --password=$PASS \
-# # #         -P ./train_scrolls/${frag}/ \
-# # #         ${base_url}/20231122192640_mask.png
-
-# # #     wget --user=$USER --password=$PASS \
-# # #         -P ./train_scrolls/${frag}/ \
-# # #         ${base_url}/20231122192640_inklabels.png
-# # # done
-
-# #!/bin/bash
-
-# USER="registeredusers"
-# PASS="only"
-
-# # List your fragments
-# fragments=("Frag2" "Frag3" "Frag4")
-
-# # Loop through each fragment
-# for frag in "${fragments[@]}"; do
-#     base_url="https://dl.ash2txt.org/community-uploads/jrudolph/rescaled-fragments/train_scrolls/${frag}"
-#     layers_url="${base_url}/layers/"
-    
-#     # Create output directory
-#     out_dir="./train_scrolls/${frag}/layers/"
-#     mkdir -p "$out_dir"
-
-#     # Download layers 15 to 45 (try both .tif and .png)
-#     for i in $(seq -w 15 45); do
-#         found=false
-#         for ext in tif png; do
-#             url="${layers_url}${i}.${ext}"
-#             wget --user=$USER --password=$PASS \
-#                 --spider --quiet "$url"
-#             if [ $? -eq 0 ]; then
-#                 wget --user=$USER --password=$PASS \
-#                     -P "$out_dir" "$url"
-#                 found=true
-#                 break
-#             fi
-#         done
-#         if [ "$found" = false ]; then
-#             echo "Warning: Slice ${i} not found in .tif or .png for ${frag}"
-#         fi
-#     done
-
-#     # Download masks and inklabels
-#     wget --user=$USER --password=$PASS \
-#         -P ./train_scrolls/${frag}/ \
-#         "${base_url}/${frag}_mask.png"
-
-#     wget --user=$USER --password=$PASS \
-#         -P ./train_scrolls/${frag}/ \
-#         "${base_url}/${frag}_inklabels.png"
-# done
-
-# USER="registeredusers"
-# PASS="only"
-
-# # List of fragments to download
-# fragments=("20231210132040,")
-
-# # Loop through each fragment
-# for frag in "${fragments[@]}"; do
-
-#     base_url="https://dl.ash2txt.org/fragments/Frag1/PHercParis2Fr47.volpkg/working/54keV_exposed_surface//${frag}"
-#     layers_url="${base_url}/layers/"
-    
-#     # Create output directory
-#     out_dir="./train_scrolls/${frag}/layers/"
-#     mkdir -p "$out_dir"
-
-#     # Download layers 15 to 45 (try both .tif and .png)
-#     for i in $(seq -w 1 64); do
-#         found=false
-#         for ext in tif png jpg; do
-#             url="${layers_url}${i}.${ext}"
-#             wget --user=$USER --password=$PASS \
-#                 --spider --quiet "$url"
-#             if [ $? -eq 0 ]; then
-#                 wget --user=$USER --password=$PASS \
-#                     -P "$out_dir" "$url"
-#                 found=true
-#                 break
-#             fi
-#         done
-#         if [ "$found" = false ]; then
-#             echo "Warning: Slice ${i} not found in .tif or .png for ${frag}"
-#         fi
-#     done
-
-#     # Download masks and inklabels
-#     wget --user=$USER --password=$PASS \
-#         -P ./train_scrolls/${frag}/ \
-#         "${base_url}/${frag}_mask.png"
-
-#     # wget --user=$USER --password=$PASS \
-#     #     -P ./train_scrolls/${frag}/ \
-#     #     "${base_url}/${frag}_inklabels.png"
-# done
-
 #!/bin/bash
 
 # ================================
 # Credentials
 # ================================
-USER="registeredusers"
-PASS="only"
+# Authentication credentials for the Vesuvius Challenge data repository
+USER=#"registeredusers"
+PASS=#"only"
 
 # ================================
 # Functions
 # ================================
 
+# Function to download a range of layer files with different possible extensions
+# Parameters:
+#   $1 - base_url: Base URL path for the layer files
+#   $2 - out_dir: Output directory where files will be saved
+#   $3 - start: Starting layer number
+#   $4 - end: Ending layer number
+#   $5 - extensions: Array reference of file extensions to try (e.g., tif, png)
 download_layers () {
     local base_url="$1"
     local out_dir="$2"
@@ -176,84 +25,147 @@ download_layers () {
     local end="$4"
     local extensions=("${!5}")
 
+    # Create output directory if it doesn't exist
     mkdir -p "$out_dir"
 
+    # Loop through each layer number (zero-padded sequence)
     for i in $(seq -w "$start" "$end"); do
         local found=false
+        # Try each extension until we find one that exists
         for ext in "${extensions[@]}"; do
             local url="${base_url}${i}.${ext}"
 
-            # Check existence
+            # Check if the file exists on the server without downloading
             if wget --user="$USER" --password="$PASS" --spider --quiet "$url"; then
+                # File exists, download it to the output directory
                 wget --user="$USER" --password="$PASS" -P "$out_dir" "$url"
                 found=true
                 break
             fi
         done
 
+        # Warn if no file with any extension was found for this layer
         if [ "$found" = false ]; then
             echo "Warning: Slice ${i} not found for: ${base_url}"
         fi
     done
 }
 
+# Function to download auxiliary files (masks and ink labels) for a fragment
+# Parameters:
+#   $1 - base_url: Base URL path for the auxiliary files
+#   $2 - frag: Fragment name/identifier (used in output filename)
+#   $3 - out_dir: Output directory where files will be saved
 download_aux_files () {
     local base_url="$1"
     local frag="$2"
     local out_dir="$3"
 
-    wget --user="$USER" --password="$PASS" -P "$out_dir" \
-        "${base_url}/${frag}_mask.png"
+    # Create output directory if it doesn't exist
+    mkdir -p "$out_dir"
 
-    # Optional inklabels
-    if wget --user="$USER" --password="$PASS" --spider --quiet \
-        "${base_url}/${frag}_inklabels.png"; then
-        wget --user="$USER" --password="$PASS" -P "$out_dir" \
-            "${base_url}/${frag}_inklabels.png"
-    fi
+    # File suffixes to look for (mask images and ink label annotations)
+    suffixes=("mask" "inklabels")
+    # Possible file extensions to check
+    exts=(png jpg tif)
+
+    # Try each suffix (mask, inklabels)
+    for suf in "${suffixes[@]}"; do
+        # Try each extension (png, jpg, tif)
+        for ext in "${exts[@]}"; do
+            # We don't know the full filename prefix, so use the directory listing
+            local url="${base_url}"
+            local pattern=".*${suf}\.${ext}"
+
+            # Get directory listing from the server
+            files=$(wget --user="$USER" --password="$PASS" -qO- "$url/" \
+                | grep -oP 'href="[^"]+"' | cut -d'"' -f2)
+
+            # Search through the directory listing for matching files
+            for f in $files; do
+                # Check if filename matches the pattern (ends with suffix.extension)
+                if [[ "$f" =~ ${suf}\.${ext}$ ]]; then
+                    echo "Found: $f"
+                    # Download and rename to standardized format: {frag}_{suffix}.{ext}
+                    wget --user="$USER" --password="$PASS" \
+                         -O "${out_dir}/${frag}_${suf}.${ext}" \
+                         "${url}/${f}"
+                    break 2   # Stop after downloading the first matched file
+                fi
+            done
+        done
+    done
 }
 
-# ================================
-# First batch: Frags
-# ================================
+# # ================================
+# # First batch: Fragment downloads
+# # ================================
+# # Download individual papyrus fragments with known ink labels for training
 
-fragments=("Frag1")
-extensions1=(tif png)
+# # Fragment 1: PHercParis2Fr47 scanned at 54keV with 3.24um resolution
+# fragments=("Frag1")
+# extensions1=(tif png)
 
-for frag in "${fragments[@]}"; do
-    base_url="https://dl.ash2txt.org/fragments/Frag1/PHercParis2Fr47.volpkg/working/54keV_exposed_surface/${frag}"
-    layers_url="${base_url}/layers/"
-    out_dir="./train_scrolls/${frag}/layers/"
+# for frag in "${fragments[@]}"; do
+#     # Base URL for Fragment 1 data
+#     base_url="https://dl.ash2txt.org/fragments/Frag1/PHercParis2Fr47.volpkg/working/54keV_exposed_surface"
+#     layers_url="${base_url}/surface_volume/"
+#     out_dir="./train_scrolls/${frag}/layers/"
 
-    download_layers "$layers_url" "$out_dir" 15 45 extensions1[@]
-    download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
-done
+#     # Download layers 15-45 and auxiliary files (mask, inklabels)
+#     download_layers "$layers_url" "$out_dir" 15 45 extensions1[@]
+#     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
+# done
 
-fragments=("Frag5")
-extensions1=(tif png)
-for frag in "${fragments[@]}"; do
+# # Fragment 5: PHerc1667Cr1Fr3 scanned at 70keV with 3.24um resolution
+# fragments=("Frag5")
+# extensions1=(tif png)
+# for frag in "${fragments[@]}"; do
 
-    base_url="https://dl.ash2txt.org/fragments/Frag5/PHerc1667Cr1Fr3.volpkg/working/PHerc1667Cr01Fr03_70keV_3.24um/surface_processing/surface_volume/${frag}"
-    layers_url="${base_url}/layers/"
-    out_dir="./train_scrolls/${frag}/layers/"
+#     # Base URL for Fragment 5 data
+#     base_url="https://dl.ash2txt.org/fragments/Frag5/PHerc1667Cr1Fr3.volpkg/working/PHerc1667Cr01Fr03_70keV_3.24um/surface_processing"
+#     layers_url="${base_url}/surface_volume/"
+#     out_dir="./train_scrolls/${frag}/layers/"
 
-    download_layers "$layers_url" "$out_dir" 15 45 extensions1[@]
-    download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
-done
+#     # Download layers 15-45 and auxiliary files (mask, inklabels)
+#     download_layers "$layers_url" "$out_dir" 15 45 extensions1[@]
+#     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
+# done
 
-# ================================
-# Second batch: full scrolls
-# ================================
+# # ================================
+# # Second batch: Full scroll downloads
+# # ================================
+# # Download full scroll data (Scroll 4 - PHerc1667)
+# # These are larger intact scrolls rather than small fragments
 
-fragments2=("20231210132040")
+# # Scroll 4 segment
+# fragments2=("20231210132040")
+# extensions2=(tif png jpg)
+
+# for frag in "${fragments2[@]}"; do
+
+#     # Base URL for Scroll 4, specific path/segmentation
+#     base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/${frag}"
+#     layers_url="${base_url}/layers/"
+#     out_dir="./train_scrolls/${frag}/layers/"
+
+#     # Download layers 15-45 and auxiliary files (mask, inklabels)
+#     download_layers "$layers_url" "$out_dir" 15 45 extensions2[@]
+#     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
+# done
+
+# Scroll 4 segment big
+fragments2=("big20231210132040")
 extensions2=(tif png jpg)
 
 for frag in "${fragments2[@]}"; do
 
-    base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/${frag}"
-    layers_url="${base_url}/layers/"
+    # Base URL for Scroll 4, specific path/segmentation
+    base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/20231210132040/render_3.24um_20231107190228/"
+    layers_url="${base_url}/layers_jpg/"
     out_dir="./train_scrolls/${frag}/layers/"
 
-    download_layers "$layers_url" "$out_dir" 1 64 extensions2[@]
+    # Download layers 15-45 and auxiliary files (mask, inklabels)
+    download_layers "$layers_url" "$out_dir" 15 45 extensions2[@]
     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
 done
