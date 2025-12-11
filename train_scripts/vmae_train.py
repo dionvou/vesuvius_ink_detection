@@ -25,31 +25,31 @@ class CFG:
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 18
-    in_chans = 24
-    valid_chans = 24
+    start_idx = 24
+    in_chans = 16
+    valid_chans = 16
     
-    size = 224
-    tile_size = 224
-    stride = tile_size // 8
+    size = 64
+    tile_size = 64
+    stride = tile_size // 4
 
-    train_batch_size = 10
-    valid_batch_size = 10   
+    train_batch_size = 50
+    valid_batch_size = 50   
     lr = 5e-5
     # ============== model cfg =============
     scheduler = 'cosine'
     epochs = 4
     
     # Change the size of fragments2
-    frags_ratio1 = ['frag','re']
+    frags_ratio1 = ['Frag','re']
     frags_ratio2 = ['s4','202','left']
     ratio1 = 2
     ratio2 = 2
     
     # ============== fold =============
-    segments = ['rect5','remaining5']#['Frag5','20231210132040']#,'frag4','frag3','frag2','frag1']
-    valid_id = 'rect5'#20231210132040'20231215151901
-    norm = False
+    segments = ['20231210132040','Frag5']#['Frag5','20231210132040']#,'frag4','frag3','frag2','frag1']
+    valid_id = '20231210132040'#20231210132040'20231215151901
+    norm = True
     aug = None
     # ============== fixed =============
     min_lr = 1e-7
@@ -129,9 +129,9 @@ print("Length of train images:", len(train_images))
 
 valid_xyxys = np.stack(valid_xyxys)
 train_dataset = utils.VideoDataset(
-    train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG),norm=True, aug='fourth',scale_factor=8)
+    train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG),norm=True, aug='fourth',scale_factor=16)
 valid_dataset = utils.VideoDataset(
-    valid_images, CFG, xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG),norm=True)
+    valid_images, CFG, xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG),norm=True,scale_factor=16)
 
 train_loader = DataLoader(train_dataset,
                             batch_size=CFG.train_batch_size,

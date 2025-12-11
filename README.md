@@ -76,24 +76,6 @@ cd vesuvius_ink_detection
 pip install -r requirements.txt
 ```
 
-### Dependencies
-
-```
-torch, torchvision, torchaudio
-pytorch-lightning
-wandb
-opencv-python
-numpy
-Pillow
-segmentation-models-pytorch
-albumentations
-warmup-scheduler
-scikit-image
-einops
-transformers
-pandas
-```
-
 ## Data Organization
 
 ### Downloading Training Data
@@ -186,8 +168,8 @@ extensions=(tif png jpg jpeg)
 #### Authentication
 
 The script uses default public credentials for the Vesuvius Challenge data repository:
-- **Username**: `registeredusers`
-- **Password**: `only`
+- **Username**: ...
+- **Password**: ...
 
 These are publicly available credentials for accessing competition data.
 

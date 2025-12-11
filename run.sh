@@ -1,0 +1,31 @@
+#!/bin/bash
+
+python train.py \
+  --model swin \
+  --segment_path ./train_scrolls/ \
+  --segments Frag5 s4 \
+  --valid_id Frag5 \
+  --start_idx 24 \
+  --in_chans 16 \
+  --valid_chans 16 \
+  --size 224 \
+  --tile_size 224 \
+  --stride_divisor 8 \
+  --train_batch_size 2 \
+  --valid_batch_size 2 \
+  --lr 5e-5 \
+  --epochs 40 \
+  --scheduler cosine \
+  --weight_decay 1e-6 \
+  --warmup_factor 10 \
+  --norm true \
+  --aug fourth \
+  --num_workers 8 \
+  --seed 0 \
+  --max_grad_norm 1.0 \
+  --comp_name vesuvius \
+  --exp_name pretraining_all \
+  --wandb_project vesivus \
+  --save_top_k -1 \
+  --devices -1 \
+  --strategy ddp_find_unused_parameters_true

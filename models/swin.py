@@ -37,7 +37,7 @@ class TimesformerDataset(Dataset):
         self.rotate = A.Compose([A.Rotate(8,p=1)])
         self.xyxys=xyxys
         self.aug = aug
-        self.scale_factor = 8
+        self.scale_factor = 16
         
         self.video_transform = T.Compose([
             T.ConvertImageDtype(torch.float32),  # scales to [0.0, 1.0]
@@ -2596,10 +2596,10 @@ class SwinDecoderStage(nn.Module):
 
 class Swin3DEncoder(nn.Module):
     """Encapsulated Swin3D encoder with 1-channel input support"""
-    def __init__(self, pretrained_ckpt='pretraining/checkpoints/tiny_epoch=70.ckpt', in_chans=1):
+    def __init__(self, pretrained_ckpt='pretraining/checkpoints/64_tiny_16_epoch=62.ckpt', in_chans=1):
         super().__init__()
         # Load Swin3D backbone
-        self.backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
+        # self.backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
         # self/backbone = swin_transformer.SwinTransformer3d(
         #     patch_size=[2, 4, 4],      # temporal=2, spatial=4x4 patches
         #     embed_dim=192,              # base dimension
@@ -2608,6 +2608,14 @@ class Swin3DEncoder(nn.Module):
         #     window_size=[8, 7, 7],     # attention window
         #     stochastic_depth_prob=0.1, # DropPath
         # )
+        self.backbone = swin_transformer.SwinTransformer3d(
+            patch_size=[16, 4, 4],      # temporal=2, spatial=4x4 patches
+            embed_dim=96,              # base dimension
+            depths=[2, 2, 12, 2],       # Tiny config
+            num_heads=[3, 6, 12, 24],  # heads per stage
+            window_size=[1, 7, 7],     # attention window
+            stochastic_depth_prob=0.1, # DropPath
+        )
 
         # --- patch_embed adaptation for 1 channel ---
         old_conv = self.backbone.patch_embed.proj
@@ -2793,106 +2801,108 @@ class SwinModel(pl.LightningModule):
         return output
 
    
-# # GOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD  
-# class SwinModel(pl.LightningModule):
-#     def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
-#         super(SwinModel, self).__init__()
+# GOODDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD  
+class SwinModel(pl.LightningModule):
+    def __init__(self, pred_shape, size, lr, scheduler=None, wandb_logger=None, freeze=False):
+        super(SwinModel, self).__init__()
 
-#         self.save_hyperparameters()
-#         self.mask_pred = np.zeros(self.hparams.pred_shape)
-#         self.mask_count = np.zeros(self.hparams.pred_shape)
-#         self.IGNORE_INDEX = 127
+        self.save_hyperparameters()
+        self.mask_pred = np.zeros(self.hparams.pred_shape)
+        self.mask_count = np.zeros(self.hparams.pred_shape)
+        self.IGNORE_INDEX = 127
 
-#         self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
-#         self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
+        self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
+        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
 
-#         self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
+        self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
 
-#         backbone = swin_transformer.SwinTransformer3d(
-#             patch_size=[2, 4, 4],      # temporal=2, spatial=4x4 patches
-#             embed_dim=192,              # base dimension
-#             depths=[2, 2, 12],       # Tiny config
-#             num_heads=[3, 6, 12],  # heads per stage
-#             window_size=[8, 7, 7],     # attention window
-#             stochastic_depth_prob=0.1, # DropPath
-#         )
+        # backbone = swin_transformer.SwinTransformer3d(
+        #     patch_size=[16, 4, 4],      # temporal=2, spatial=4x4 patches
+        #     embed_dim=96,              # base dimension
+        #     depths=[2, 2, 12],       # Tiny config
+        #     num_heads=[3, 6, 12],  # heads per stage
+        #     window_size=[1, 7, 7],     # attention window
+        #     stochastic_depth_prob=0.1, # DropPath
+        # )
+        backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
 
 
-#         # Get old weights
-#         old_conv = backbone.patch_embed.proj  # Conv3d(3, 128, ...)
-#         weight = old_conv.weight  # [128, 3, 2, 4, 4]
-#         bias = old_conv.bias      # [128]
 
-#         # Adapt weights: average across RGB → 1 channel
-#         new_weight = weight.sum(dim=1, keepdim=True)  # [128, 1, 2, 4, 4]
+        # Get old weights
+        old_conv = backbone.patch_embed.proj  # Conv3d(3, 128, ...)
+        weight = old_conv.weight  # [128, 3, 2, 4, 4]
+        bias = old_conv.bias      # [128]
 
-#         # Replace conv with new one (keep out_channels=128!)
-#         backbone.patch_embed.proj = nn.Conv3d(
-#             in_channels=1,
-#             out_channels=128,
-#             kernel_size=(2, 4, 4),
-#             stride=(2, 4, 4),
-#             bias=True
-#         )
+        # Adapt weights: average across RGB → 1 channel
+        new_weight = weight.sum(dim=1, keepdim=True)  # [128, 1, 2, 4, 4]
 
-#         # Load adapted weights
-#         backbone.patch_embed.proj.weight = nn.Parameter(new_weight)
-#         backbone.patch_embed.proj.bias = nn.Parameter(bias.clone())  # shape [128]
-#         self.backbone = backbone#nn.Sequential(*list(backbone.children())[:-2]) 
+        # Replace conv with new one (keep out_channels=128!)
+        backbone.patch_embed.proj = nn.Conv3d(
+            in_channels=1,
+            out_channels=128,
+            kernel_size=(2, 4, 4),
+            stride=(2, 4, 4),
+            bias=True
+        )
+
+        # Load adapted weights
+        backbone.patch_embed.proj.weight = nn.Parameter(new_weight)
+        backbone.patch_embed.proj.bias = nn.Parameter(bias.clone())  # shape [128]
+        self.backbone = backbone#nn.Sequential(*list(backbone.children())[:-2]) 
         
-#         pretrained_ckpt = None#'pretraining/checkpoints/64_tiny_16_scratch_epoch=5-v3.ckpt'
-#         if pretrained_ckpt:
-#             ckpt = torch.load(pretrained_ckpt, map_location='cpu',weights_only=False)
-#             ckpt_state_dict = ckpt['state_dict']  # your loaded checkpoint
-#             model_state_dict = self.backbone.state_dict()
+        pretrained_ckpt = None#'pretraining/checkpoints/64_tiny_16_scratch_epoch=5-v3.ckpt'
+        if pretrained_ckpt:
+            ckpt = torch.load(pretrained_ckpt, map_location='cpu',weights_only=False)
+            ckpt_state_dict = ckpt['state_dict']  # your loaded checkpoint
+            model_state_dict = self.backbone.state_dict()
 
-#             new_state_dict = {}
-#             used_ckpt_keys = set()  # keep track of keys already used
+            new_state_dict = {}
+            used_ckpt_keys = set()  # keep track of keys already used
 
 
-#             for k_model in model_state_dict.keys():
-#                 # Skip decoder stuff
-#                 if any(x in k_model for x in ['decoder_pos_embed', 'mask_token', 'decoder']):
-#                     continue
-#                 print(k_model)
-#                 # Find corresponding key in checkpoint
-#                 if k_model in ckpt_state_dict:
-#                     new_state_dict[k_model] = ckpt_state_dict[k_model]
-#                 else:
-#                     # Fallback: find first unused key with matching shape
-#                     for k_ckpt, v_ckpt in ckpt_state_dict.items():
-#                         if k_ckpt in used_ckpt_keys:
-#                             continue  # skip already used keys
-#                         if v_ckpt.shape == model_state_dict[k_model].shape:
-#                             new_state_dict[k_model] = v_ckpt
-#                             used_ckpt_keys.add(k_ckpt)
-#                             print(f"Fallback match: {k_model} <- {k_ckpt}")
-#                             break
+            for k_model in model_state_dict.keys():
+                # Skip decoder stuff
+                if any(x in k_model for x in ['decoder_pos_embed', 'mask_token', 'decoder']):
+                    continue
+                print(k_model)
+                # Find corresponding key in checkpoint
+                if k_model in ckpt_state_dict:
+                    new_state_dict[k_model] = ckpt_state_dict[k_model]
+                else:
+                    # Fallback: find first unused key with matching shape
+                    for k_ckpt, v_ckpt in ckpt_state_dict.items():
+                        if k_ckpt in used_ckpt_keys:
+                            continue  # skip already used keys
+                        if v_ckpt.shape == model_state_dict[k_model].shape:
+                            new_state_dict[k_model] = v_ckpt
+                            used_ckpt_keys.add(k_ckpt)
+                            print(f"Fallback match: {k_model} <- {k_ckpt}")
+                            break
                             
-#             # Load into model
-#             msg = self.backbone.load_state_dict(new_state_dict, strict=False)
-#             print("Loaded:", msg)
+            # Load into model
+            msg = self.backbone.load_state_dict(new_state_dict, strict=False)
+            print("Loaded:", msg)
 
-#         # Remove classifier head, keep norm
-#         self.backbone.head = nn.Identity()
+        # Remove classifier head, keep norm
+        self.backbone.head = nn.Identity()
     
-#         embed_dim = 768
-#         # self.backbone = backbone
-#         # self.backbone.head = nn.Identity()
+        embed_dim = 768
+        # self.backbone = backbone
+        # self.backbone.head = nn.Identity()
 
 
-#         self.classifier = nn.Sequential(
-#                 nn.Linear(embed_dim,(self.hparams.size//8)**2),
-#         )
-#     # 
-#     def forward(self, x):
+        self.classifier = nn.Sequential(
+                nn.Linear(embed_dim,(self.hparams.size//16)**2),
+        )
+    # 
+    def forward(self, x):
 
-#         x = x.permute(0,2,1,3,4)
-#         preds = self.backbone(x)  # runs backbone, sets self.feature
-#         print(preds.shape)
-#         preds = self.classifier(preds)
-#         preds = preds.view(-1,1,self.hparams.size//8,self.hparams.size//8)
-#         return preds
+        x = x.permute(0,2,1,3,4)
+        preds = self.backbone(x)  # runs backbone, sets self.feature
+        # print(preds.shape)
+        preds = self.classifier(preds)
+        preds = preds.view(-1,1,self.hparams.size//16,self.hparams.size//16)
+        return preds
     
 
 
@@ -2917,7 +2927,7 @@ class SwinModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=8,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=16,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)

@@ -41,11 +41,11 @@ class VideoMaeModel(pl.LightningModule):
 
   
         videomae_config = VideoMAEConfig(
-            image_size=224,
+            image_size=64,
             patch_size=16,
             num_channels=1,
-            num_frames=24,
-            tubelet_size=2,
+            num_frames=16,
+            tubelet_size=16,
             hidden_size=768,
             num_hidden_layers=12,
             num_attention_heads=12,
@@ -63,7 +63,7 @@ class VideoMaeModel(pl.LightningModule):
 
         try:
             ckpt = torch.load(
-                'checkpoints/videomae_epoch=035_val_loss=0.4559.ckpt',
+                'checkpoints/videomae_epoch=061_val_loss=0.4282.ckpt',
                 map_location="cpu",
                 weights_only=False
             )
@@ -93,7 +93,7 @@ class VideoMaeModel(pl.LightningModule):
         embed_dim = 768
 
         self.classifier = nn.Sequential(
-                nn.Linear(embed_dim,(self.hparams.size//8)**2),
+                nn.Linear(embed_dim,(self.hparams.size//16)**2),
         )
     # 
     def forward(self, x):
@@ -111,7 +111,7 @@ class VideoMaeModel(pl.LightningModule):
         # return out
         cls = tokens[:, 0]   
         out = self.classifier(cls)
-        out = out.view(-1, 1, self.hparams.size // 8, self.hparams.size // 8)
+        out = out.view(-1, 1, self.hparams.size // 16, self.hparams.size // 16)
         return out
         
     def training_step(self, batch, batch_idx):
@@ -135,7 +135,7 @@ class VideoMaeModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=8,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=16,mode='bilinear').squeeze(0).squeeze(0).numpy()
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)

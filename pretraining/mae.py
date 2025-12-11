@@ -40,12 +40,12 @@ class CFG:
     start_idx = 22
     in_chans = 18
     valid_chans = 16
-    size = 224
-    tile_size = 224
+    size = 64
+    tile_size = 64
 
     # Training hyperparameters
-    train_batch_size = 128  # Reduced for video processing
-    valid_batch_size = 128
+    train_batch_size = 256  # Reduced for video processing
+    valid_batch_size = 256
     lr = 1e-4
     epochs = 200
     warmup_epochs = 5
@@ -72,7 +72,7 @@ class CFG:
 
     # Video dimensions
     input_frames = 16
-    tubelet_size = 2  # Temporal patch size
+    tubelet_size = 8  # Temporal patch size
 
     # Optimizer
     weight_decay = 0.05
@@ -121,7 +121,7 @@ class TileDataset(Dataset):
         self.tile_paths = []
         
         for split in splits:
-            split_path = Path(base_path) / "224_tiles" / split
+            split_path = Path(base_path) / "64_tiles" / split
             if split_path.exists():
                 self.tile_paths.extend([
                     str(p) for p in split_path.glob("*.npy")

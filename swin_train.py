@@ -59,8 +59,8 @@ class CFG:
     tile_size = 224
     stride = tile_size // 8
 
-    train_batch_size = 2
-    valid_batch_size = 2     
+    train_batch_size = 15
+    valid_batch_size = 15  
     lr = 5e-5
     # ============== model cfg =============
     scheduler = 'cosine'
@@ -74,8 +74,8 @@ class CFG:
     
     # ============== fold =============
     segments = ['Frag5','s4']
-    valid_id = 'frag5'#20231210132040'20231215151901
-    norm = True
+    valid_id = 'Frag5'#20231210132040'20231215151901
+    norm = False
     aug = 'fourth'  # 'none', 'shift', 'fourth'
     # ============== fixed =============
     min_lr = 1e-7
@@ -128,12 +128,10 @@ t=0
 utils.cfg_init(CFG)
 torch.set_float32_matmul_precision('medium')
 
-for frags in [['20231210132040','Frag5'],['s4','left'],['re','20231215151901']]:
+for frags in [['20231210132040','Frag5']]:
     t=t+1
     
     CFG.norm = False
-    # CFG.lr = 
-    CFG.aug = 'fourth'
     
     CFG.segments = frags
     CFG.valid_id = frags[0]
@@ -170,13 +168,9 @@ for frags in [['20231210132040','Frag5'],['s4','left'],['re','20231215151901']]:
 
 
     valid_xyxys = np.stack(valid_xyxys)
-    train_dataset = utils.VideoDataset( train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG),norm=CFG.norm, aug=CFG.aug, out_chans=1, scale_factor=8)
-    valid_dataset = utils.VideoDataset( valid_images, CFG,xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG),norm=CFG.norm, aug=CFG.aug, out_chans=1, scale_factor=8)
-    # train_dataset = swin.TimesformerDataset(
-    #     train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG),norm=CFG.norm, aug=CFG.aug)
-    # valid_dataset = swin.TimesformerDataset(
-    #     valid_images, CFG, xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG),norm=CFG.norm,aug=CFG.aug)
-
+    train_dataset = utils.VideoDataset( train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG),norm=CFG.norm, aug=CFG.aug, out_chans=1, scale_factor=16)
+    valid_dataset = utils.VideoDataset( valid_images, CFG,xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG),norm=CFG.norm, aug=CFG.aug, out_chans=1, scale_factor=16)
+   
     train_loader = DataLoader(train_dataset,
                                 batch_size=CFG.train_batch_size,
                                 shuffle=True,
@@ -207,7 +201,7 @@ for frags in [['20231210132040','Frag5'],['s4','left'],['re','20231215151901']]:
         precision='16',
         gradient_clip_val=1.0,
         gradient_clip_algorithm="norm",
-        strategy='ddp',
+        strategy='ddp_find_unused_parameters_true',
         # callbacks=[ModelCheckpoint(filename=f'{run_slug}_'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
         # ]
 

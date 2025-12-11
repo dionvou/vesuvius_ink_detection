@@ -76,12 +76,12 @@ class CFG:
     in_chans = 18
     valid_chans = 16 # chans used 
     
-    size = 224
-    tile_size = 224
+    size = 64
+    tile_size = 64
     stride = tile_size // 1
     
-    train_batch_size = 20
-    valid_batch_size = 5
+    train_batch_size = 128
+    valid_batch_size = 128
     lr = 1e-4
     # num_workers = 16
     
@@ -94,7 +94,7 @@ class CFG:
     frags_ratio1 = ['frag','re']
     frags_ratio2 = ['202','s4','left']
     ratio1 = 2
-    ratio2 = 1
+    ratio2 = 2
     
     # ============== valid =============
     segments = ['20240304141531'] 
@@ -181,7 +181,7 @@ class TileDataset(Dataset):
     def __init__(self, base_path, splits=["train"], transform=None):
         self.tile_paths = []
         for split in splits:
-            split_path = os.path.join(base_path, "224_tiles", split)
+            split_path = os.path.join(base_path, "64_tiles", split)
             self.tile_paths += [
                 os.path.join(split_path, f) 
                 for f in os.listdir(split_path) if f.endswith(".npy")
@@ -307,15 +307,15 @@ class MAEPretrain(pl.LightningModule):
         self.save_hyperparameters()
         
         # Load pretrained Swin3D backbone
-        backbone = swin_transformer.swin3d_b(weights='KINETICS400_IMAGENET22K_V1')
-        # backbone = swin_transformer.SwinTransformer3d(
-        #     patch_size=[2, 4, 4],      # temporal=2, spatial=4x4 patches
-        #     embed_dim=192,              # base dimension
-        #     depths=[2, 2, 12],       # Tiny config
-        #     num_heads=[3, 6, 12],  # heads per stage
-        #     window_size=[8, 7, 7],     # attention window
-        #     stochastic_depth_prob=0.1, # DropPath
-        # )
+        # backbone = swin_transformer.swin3d_t(weights='KINETICS400_V1')
+        backbone = swin_transformer.SwinTransformer3d(
+            patch_size=[2, 4, 4],      # temporal=2, spatial=4x4 patches
+            embed_dim=192,              # base dimension
+            depths=[2, 2, 12],       # Tiny config
+            num_heads=[3, 6, 12],  # heads per stage
+            window_size=[8, 7, 7],     # attention window
+            stochastic_depth_prob=0.1, # DropPath
+        )
 
 
         # Get old weights
@@ -340,11 +340,11 @@ class MAEPretrain(pl.LightningModule):
         backbone.patch_embed.proj.bias = nn.Parameter(bias.clone())  # shape [128]
         self.encoder = nn.Sequential(*list(backbone.children())[:-2]) 
         
-        self.patch_size = 32
+        self.patch_size = 16
         self.input_T = 16
-        self.input_H = 224
-        self.input_W = 224
-        self.tubelet_size = 2
+        self.input_H = 64
+        self.input_W = 64
+        self.tubelet_size = 1
         self.mask_ratio = self.hparams.mask_ratio
 
         # self.criterion = lambda pred, target: 1 * mse_loss(pred, target)  
@@ -729,7 +729,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 # Save a checkpoint at the end of every epoch
 checkpoint_callback = ModelCheckpoint(
     dirpath="checkpoints",             # folder to save
-    filename="224_tiny_16_{epoch}",           # filename pattern
+    filename="64_tiny_16_{epoch}",           # filename pattern
     save_top_k=-1,                     # save all checkpoints
     every_n_epochs=1                   # save every epoch
 )

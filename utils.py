@@ -220,7 +220,7 @@ class VideoDataset(Dataset):
         labels=None,
         transform=None,
         norm=True,
-        aug='fourth',
+        aug=None,
         out_chans=1,
         scale_factor=8
     ):
@@ -280,27 +280,44 @@ class VideoDataset(Dataset):
     #                      AUGMENTATIONS
     # ------------------------------------------------------------ #
 
+    # def fourth_augment(self, image):
+    #     """
+    #     Custom channel augmentation.
+    #     Keeps exactly cfg.valid_chans channels.
+    #     """
+    #     C = self.cfg.in_chans
+    #     K = self.cfg.valid_chans
+
+    #     # choose crop
+    #     start_idx = random.randint(0, C - K)
+    #     crop_idx = np.arange(start_idx, start_idx + K)
+
+    #     # choose where to paste
+    #     paste_idx = random.randint(0, C - K)
+
+    #     # container
+    #     tmp = np.zeros_like(image)
+    #     tmp[..., paste_idx: paste_idx + K] = image[..., crop_idx]
+
+    #     # return only the pasted region
+    #     return tmp[..., paste_idx: paste_idx + K]
     def fourth_augment(self, image):
         """
-        Custom channel augmentation.
-        Keeps exactly cfg.valid_chans channels.
+        Randomly crop K contiguous channels and zero out random others.
         """
         C = self.cfg.in_chans
         K = self.cfg.valid_chans
 
-        # choose crop
+        # pick contiguous crop
         start_idx = random.randint(0, C - K)
         crop_idx = np.arange(start_idx, start_idx + K)
+        cropped = image[..., crop_idx].copy()
 
-        # choose where to paste
-        paste_idx = random.randint(0, C - K)
+        # randomly zero out some channels inside the cropped block
+        zero_mask = np.random.rand(K) < 0.05 # 5% chance per channel
+        cropped[..., zero_mask] = 0
 
-        # container
-        tmp = np.zeros_like(image)
-        tmp[..., paste_idx: paste_idx + K] = image[..., crop_idx]
-
-        # return only the pasted region
-        return tmp[..., paste_idx: paste_idx + K]
+        return cropped
 
     def shuffle_channels(self, image):
         """Random channel shuffle, returns exactly valid_chans."""
@@ -313,12 +330,11 @@ class VideoDataset(Dataset):
     # ------------------------------------------------------------ #
 
     def apply_aug(self, image):
-        if self.aug == "fourth":
-            return self.fourth_augment(image)
-        elif self.aug == "shuffle":
-            return self.shuffle_channels(image)
-        else:
-            return image
+        # if self.aug == "fourth":
+        image = self.fourth_augment(image)
+        if self.aug == "shuffle":
+            image = self.shuffle_channels(image)
+        return image
 
     # ------------------------------------------------------------ #
     #                      MAIN GETITEM
