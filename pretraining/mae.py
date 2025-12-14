@@ -37,15 +37,15 @@ class CFG:
     segment_path = './pretraining_scrolls/'
 
     # Model architecture
-    start_idx = 22
-    in_chans = 18
-    valid_chans = 16
-    size = 64
-    tile_size = 64
+    start_idx = 24
+    in_chans = 12
+    valid_chans = 8
+    size = 224
+    tile_size = 224
 
     # Training hyperparameters
-    train_batch_size = 256  # Reduced for video processing
-    valid_batch_size = 256
+    train_batch_size = 128  # Reduced for video processing
+    valid_batch_size = 128
     lr = 1e-4
     epochs = 200
     warmup_epochs = 5
@@ -71,8 +71,8 @@ class CFG:
     decoder_intermediate_size = 768
 
     # Video dimensions
-    input_frames = 16
-    tubelet_size = 8  # Temporal patch size
+    input_frames = 8
+    tubelet_size = 1  # Temporal patch size
 
     # Optimizer
     weight_decay = 0.05
@@ -121,7 +121,7 @@ class TileDataset(Dataset):
         self.tile_paths = []
         
         for split in splits:
-            split_path = Path(base_path) / "64_tiles" / split
+            split_path = Path(base_path) / "224_tiles" / split
             if split_path.exists():
                 self.tile_paths.extend([
                     str(p) for p in split_path.glob("*.npy")

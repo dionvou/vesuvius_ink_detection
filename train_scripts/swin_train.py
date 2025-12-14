@@ -51,16 +51,16 @@ class CFG:
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 24
-    in_chans = 16
-    valid_chans = 16
+    start_idx = 30
+    in_chans = 4
+    valid_chans = 4
     
-    size = 224
-    tile_size = 224
+    size = 64
+    tile_size = 128
     stride = tile_size // 8
 
-    train_batch_size = 15
-    valid_batch_size = 15  
+    train_batch_size = 128
+    valid_batch_size = 256
     lr = 5e-5
     # ============== model cfg =============
     scheduler = 'cosine'
@@ -68,15 +68,15 @@ class CFG:
     
     # Change the size of fragments2
     frags_ratio1 = ['Frag','re']
-    frags_ratio2 = ['s4','202','left']
+    frags_ratio2 = ['s4','202']
     ratio1 = 2
-    ratio2 = 1
+    ratio2 = 2
     
     # ============== fold =============
-    segments = ['Frag5','s4']
-    valid_id = 'Frag5'#20231210132040'20231215151901
-    norm = False
-    aug = 'fourth'  # 'none', 'shift', 'fourth'
+    segments = ['20240304144031','Frag5']
+    valid_id = '20240304144031'#20231210132040'20231215151901
+    norm = True
+    aug = None  # 'none', 'shift', 'fourth'
     # ============== fixed =============
     min_lr = 1e-7
     weight_decay = 1e-6
@@ -98,14 +98,14 @@ class CFG:
     train_aug_list = [
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
-        A.RandomBrightnessContrast(p=0.75),
-        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.1,p=0.75),
-        A.OneOf([
-                A.GaussNoise(var_limit=[10, 50]),
-                A.GaussianBlur(),
-                A.MotionBlur(),
-                ], p=0.4),
-        A.CoarseDropout(max_holes=5, max_width=int(size * 0.1), max_height=int(size * 0.2), 
+        # A.RandomBrightnessContrast(p=0.75),
+        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.,p=0.75),
+        # A.OneOf([
+        #         A.GaussNoise(var_limit=[10, 50]),
+        #         A.GaussianBlur(),
+        #         A.MotionBlur(),
+        #         ], p=0.4),
+        A.CoarseDropout(max_holes=5, max_width=int(size * 0.1), max_height=int(size * 0.1), 
                         mask_fill_value=0, p=0.5),
         ToTensorV2(transpose_mask=True),
     ]
@@ -113,6 +113,35 @@ class CFG:
     valid_aug_list = [
         ToTensorV2(transpose_mask=True),  
     ]
+    # train_aug_list = [
+    #     A.Resize(size, size),
+    #     A.HorizontalFlip(p=0.5),
+    #     A.VerticalFlip(p=0.5),
+    #     A.RandomBrightnessContrast(p=0.75),
+    #     A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.15,p=0.75),
+    #     A.RandomBrightnessContrast(p=0.15, brightness_limit=(-0.2, 0.4), contrast_limit=(-0.2, 0.2)),
+    #     A.OneOf([
+    #             A.GaussNoise(var_limit=[10, 50]),
+    #             A.GaussianBlur(),
+    #             A.MotionBlur(),
+    #             ], p=0.4),
+    #     A.CoarseDropout(max_holes=2, max_width=int(size * 0.2), max_height=int(size * 0.2), 
+    #                     mask_fill_value=0, p=0.5),
+    #     A.Normalize(
+    #         mean= [0] * in_chans,
+    #         std= [1] * in_chans
+    #     ),
+    #     ToTensorV2(transpose_mask=True),
+    # ]
+
+    # valid_aug_list = [
+    #     A.Resize(size, size),
+    #     A.Normalize(
+    #         mean= [0] * in_chans,
+    #         std= [1] * in_chans
+    #     ),
+    #     ToTensorV2(transpose_mask=True),
+    # ]
     
 def get_transforms(data, cfg):
     if data == 'train':
@@ -128,20 +157,19 @@ t=0
 utils.cfg_init(CFG)
 torch.set_float32_matmul_precision('medium')
 
-for frags in [['20231210132040','Frag5']]:
+for k in [20,24,28,34]:
     t=t+1
     
-    CFG.norm = False
+    # CFG.norm = True
     
-    CFG.segments = frags
-    CFG.valid_id = frags[0]
+    # CFG.segments = frags
+    # CFG.valid_id = frags[0]
+    # CFG.start_idx = k
 
     fragment_id = CFG.valid_id
     run_slug=f'_SWIN_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.valid_chans},norm={CFG.norm},fourth={CFG.aug}'
 
     valid_mask_gt = cv2.imread(f"{CFG.segment_path}{fragment_id}/layers/32.tif", 0)
-
-    
 
     if any(sub in fragment_id for sub in CFG.frags_ratio1):
         scale = 1 / CFG.ratio1
@@ -155,10 +183,6 @@ for frags in [['20231210132040','Frag5']]:
         new_h = int(valid_mask_gt.shape[0] * scale)
         valid_mask_gt = cv2.resize(valid_mask_gt, (new_w, new_h), interpolation=cv2.INTER_AREA)
     
-    
-    # pad0 = (CFG.size - valid_mask_gt.shape[0] % CFG.size) % CFG.size
-    # pad1 = (CFG.size - valid_mask_gt.shape[1] % CFG.size) % CFG.size
-    # valid_mask_gt = np.pad(valid_mask_gt, [(0, pad0), (0, pad1)], constant_values=0)
     pred_shape=valid_mask_gt.shape
 
     train_images, train_masks, valid_images, valid_masks, valid_xyxys = utils.get_train_valid_dataset(CFG)
@@ -168,8 +192,8 @@ for frags in [['20231210132040','Frag5']]:
 
 
     valid_xyxys = np.stack(valid_xyxys)
-    train_dataset = utils.VideoDataset( train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG),norm=CFG.norm, aug=CFG.aug, out_chans=1, scale_factor=16)
-    valid_dataset = utils.VideoDataset( valid_images, CFG,xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG),norm=CFG.norm, aug=CFG.aug, out_chans=1, scale_factor=16)
+    train_dataset = utils.VideoDataset( train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG),norm=CFG.norm, aug=CFG.aug, out_chans=1, scale_factor=8)
+    valid_dataset = utils.VideoDataset( valid_images, CFG,xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG),norm=CFG.norm, aug=CFG.aug, out_chans=1, scale_factor=8)
    
     train_loader = DataLoader(train_dataset,
                                 batch_size=CFG.train_batch_size,
@@ -184,16 +208,16 @@ for frags in [['20231210132040','Frag5']]:
     print(f"Train loader length: {len(train_loader)}")
     print(f"Valid loader length: {len(valid_loader)}")
 
-    wandb_logger = WandbLogger(project="vesivus", name=run_slug)  
+    wandb_logger = WandbLogger(project="vesuvius_ink_detection", name=run_slug,)  
     model = swin.SwinModel(pred_shape=pred_shape, size=CFG.size, lr=CFG.lr, scheduler=CFG.scheduler, wandb_logger=wandb_logger,freeze=False)
     wandb_logger.watch(model, log="all", log_freq=50, log_graph=False)
 
 
-    # model = swin.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/1_SWIN_['frag5', '20231215151901']_valid=20231215151901_size=224_lr=2e-05_in_chans=8,norm=False,fourth=shift_epoch=7.ckpt")
+    # model = swin.load_weights(model,"outputs/vesuvius/pretraining_all/vesuvius-models/_SWIN_['20231210132040', 'Frag5']_valid=20231210132040_size=64_lr=5e-05_in_chans=16,norm=True,fourth=None_epoch=11.ckpt")
     trainer = pl.Trainer(
         max_epochs=40,
         accelerator="gpu",
-        check_val_every_n_epoch=4,
+        check_val_every_n_epoch=8,
         devices=-1,
         logger=wandb_logger,
         default_root_dir="./modelss",
@@ -202,13 +226,15 @@ for frags in [['20231210132040','Frag5']]:
         gradient_clip_val=1.0,
         gradient_clip_algorithm="norm",
         strategy='ddp_find_unused_parameters_true',
-        # callbacks=[ModelCheckpoint(filename=f'{run_slug}_'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
-        # ]
+        callbacks=[ModelCheckpoint(filename=f'{run_slug}_'+'{epoch}',dirpath=CFG.model_dir,monitor='train/total_loss',mode='min',save_top_k=CFG.epochs),
+        ]
 
     )
     # trainer.validate(model=model, dataloaders=valid_loader, verbose=True)
     trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
     wandb.finish()
+
+
 # Finish W&B run once, and only on rank 0
 @rank_zero_only
 def finish_wandb():

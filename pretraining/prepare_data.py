@@ -22,9 +22,9 @@ class CFG:
     start_idx = 15
     in_chans = 30
     
-    size = 64
-    tile_size = 64
-    stride = tile_size // 2
+    size = 224
+    tile_size = 224
+    stride = tile_size // 4
     
     num_workers = 16
     
@@ -191,8 +191,8 @@ for folder in folders_in_base:
         
 def preprocess_and_save_tiles(CFG):
     # Save tiles inside segment_path/tiles/train and segment_path/tiles/valid
-    train_dir = os.path.join(CFG.segment_path, "64_tiles", "train")
-    valid_dir = os.path.join(CFG.segment_path, "64_tiles", "valid")
+    train_dir = os.path.join(CFG.segment_path, "224_tiles", "train")
+    valid_dir = os.path.join(CFG.segment_path, "224_tiles", "valid")
     os.makedirs(train_dir, exist_ok=True)
     os.makedirs(valid_dir, exist_ok=True)
 

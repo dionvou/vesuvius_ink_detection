@@ -21,11 +21,67 @@ from scipy.ndimage import zoom
 
 import traceback
 
+import numpy as np
+from scipy.interpolate import CubicSpline
+
+def create_lut(control_points, bit_depth=8):
+    """
+    Create a lookup table (LUT) based on control points for the given bit depth.
+
+    Args:
+        control_points (list of tuples): Control points in 8-bit range, e.g. [(0,0), (128,64), (255,255)]
+        bit_depth (int): Bit depth of the image (8 or 16)
+
+    Returns:
+        np.ndarray: The generated LUT as a 1D numpy array.
+    """
+    if bit_depth == 16:
+        # Scale control points from 8-bit to 16-bit (0-255 -> 0-65535)
+        control_points = [(x * 257, y * 257) for x, y in control_points]
+        x_points, y_points = zip(*control_points)
+        x_range = np.linspace(0, 65535, 65536)
+        spline = CubicSpline(x_points, y_points)
+        lut = spline(x_range)
+        lut = np.clip(lut, 0, 65535).astype('uint16')
+    elif bit_depth == 8:
+        x_points, y_points = zip(*control_points)
+        x_range = np.linspace(0, 255, 256)
+        spline = CubicSpline(x_points, y_points)
+        lut = spline(x_range)
+        lut = np.clip(lut, 0, 255).astype('uint8')
+    else:
+        raise ValueError("Unsupported bit depth: {}".format(bit_depth))
+    return lut
+
+def apply_lut_to_stack(img_stack, lut):
+    """
+    Apply a LUT to a 3D grayscale image stack (H, W, D).
+
+    Args:
+        img_stack (np.ndarray): Input stack with shape (H, W, D), dtype uint8.
+        lut (np.ndarray): Lookup table of shape (256,) for 8-bit images.
+
+    Returns:
+        np.ndarray: Contrast-adjusted image stack.
+    """
+    if img_stack.dtype != np.uint8:
+        raise ValueError("Image stack must be of dtype uint8.")
+    if lut.shape[0] != 256:
+        raise ValueError("LUT must have 256 values for 8-bit images.")
+
+    # Apply LUT using NumPy fancy indexing — fast and vectorized
+    return lut[img_stack]
+
 
 def read_image_mask(fragment_id, CFG=None):
     """ 
     Reads a fragment image and its corresponding masks.    
     """
+
+    control_points = [(0, 0), (128, 64), (255, 255)]
+
+    # Create the LUT
+    lut = create_lut(control_points, bit_depth=8)
     images = []
     start_idx = CFG.start_idx 
     end_idx = start_idx + CFG.in_chans
@@ -72,14 +128,15 @@ def read_image_mask(fragment_id, CFG=None):
                 image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
             image_shape = (image.shape[1], image.shape[0])
                 
-            pad0 = (CFG.size - image.shape[0] % CFG.size) % CFG.size
-            pad1 = (CFG.size - image.shape[1] % CFG.size) % CFG.size
-            image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
+            # pad0 = (CFG.size - image.shape[0] % CFG.size) % CFG.size
+            # pad1 = (CFG.size - image.shape[1] % CFG.size) % CFG.size
+            # image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
            
-            image=np.clip(image,0,200)
+            # image=np.clip(image,0,200)
             images.append(image)
 
         images = np.stack(images, axis=2)
+        images = apply_lut_to_stack(images, lut)
         print(f" Shape of {fragment_id} segment: {images.shape}")
         # if fragment_id == '20231024093300':
         #     images=images[:,:,::-1]
@@ -112,9 +169,8 @@ def read_image_mask(fragment_id, CFG=None):
 
             # # Build save path (same folder as images)
             save_dir = f"{CFG.segment_path}/{fragment_id}"
-            # os.makedirs(save_dir, exist_ok=True)
 
-            save_path = os.path.join(save_dir, "{fragment_id}_inklabels.png")
+            save_path = os.path.join(save_dir, f"{fragment_id}_inklabels.png")
 
             # Save mask
             cv2.imwrite(save_path, mask)
@@ -128,11 +184,11 @@ def read_image_mask(fragment_id, CFG=None):
             
 
         fragment_mask =  cv2.resize(fragment_mask , image_shape, interpolation=cv2.INTER_AREA)
-        pad0 = (CFG.size - fragment_mask.shape[0] % CFG.size) % CFG.size
-        pad1 = (CFG.size - fragment_mask.shape[1] % CFG.size) % CFG.size
-        fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
+        # pad0 = (CFG.size - fragment_mask.shape[0] % CFG.size) % CFG.size
+        # pad1 = (CFG.size - fragment_mask.shape[1] % CFG.size) % CFG.size
+        # fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
 
-        mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
+        # mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
         
         
         mask = mask.astype('float32')
@@ -279,28 +335,6 @@ class VideoDataset(Dataset):
     # ------------------------------------------------------------ #
     #                      AUGMENTATIONS
     # ------------------------------------------------------------ #
-
-    # def fourth_augment(self, image):
-    #     """
-    #     Custom channel augmentation.
-    #     Keeps exactly cfg.valid_chans channels.
-    #     """
-    #     C = self.cfg.in_chans
-    #     K = self.cfg.valid_chans
-
-    #     # choose crop
-    #     start_idx = random.randint(0, C - K)
-    #     crop_idx = np.arange(start_idx, start_idx + K)
-
-    #     # choose where to paste
-    #     paste_idx = random.randint(0, C - K)
-
-    #     # container
-    #     tmp = np.zeros_like(image)
-    #     tmp[..., paste_idx: paste_idx + K] = image[..., crop_idx]
-
-    #     # return only the pasted region
-    #     return tmp[..., paste_idx: paste_idx + K]
     def fourth_augment(self, image):
         """
         Randomly crop K contiguous channels and zero out random others.
@@ -314,7 +348,7 @@ class VideoDataset(Dataset):
         cropped = image[..., crop_idx].copy()
 
         # randomly zero out some channels inside the cropped block
-        zero_mask = np.random.rand(K) < 0.05 # 5% chance per channel
+        zero_mask = np.random.rand(K) < 0.03 # 5% chance per channel
         cropped[..., zero_mask] = 0
 
         return cropped

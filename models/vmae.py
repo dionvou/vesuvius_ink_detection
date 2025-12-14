@@ -35,17 +35,17 @@ class VideoMaeModel(pl.LightningModule):
         self.IGNORE_INDEX = 127
 
         self.loss_func1 = smp.losses.DiceLoss(mode='binary',ignore_index=self.IGNORE_INDEX)
-        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.25,ignore_index=self.IGNORE_INDEX)
+        self.loss_func2= smp.losses.SoftBCEWithLogitsLoss(smooth_factor=0.15,ignore_index=self.IGNORE_INDEX)
 
-        self.loss_func= lambda x,y: 0.5 * self.loss_func1(x,y)+0.5*self.loss_func2(x,y)
+        self.loss_func= lambda x,y: 0.6 * self.loss_func1(x,y)+0.4*self.loss_func2(x,y)
 
   
         videomae_config = VideoMAEConfig(
             image_size=64,
             patch_size=16,
             num_channels=1,
-            num_frames=16,
-            tubelet_size=16,
+            num_frames=8,
+            tubelet_size=8,
             hidden_size=768,
             num_hidden_layers=12,
             num_attention_heads=12,
@@ -63,7 +63,7 @@ class VideoMaeModel(pl.LightningModule):
 
         try:
             ckpt = torch.load(
-                'checkpoints/videomae_epoch=061_val_loss=0.4282.ckpt',
+                'checkpoints/videomae_epoch=069_val_loss=0.6117.ckpt',
                 map_location="cpu",
                 weights_only=False
             )
@@ -87,28 +87,22 @@ class VideoMaeModel(pl.LightningModule):
 
         # Remove classifier head, keep norm
         self.encoder.head = nn.Identity()
-        # for param in self.encoder.parameters():
-        #     param.requires_grad = False
     
         embed_dim = 768
-
         self.classifier = nn.Sequential(
-                nn.Linear(embed_dim,(self.hparams.size//16)**2),
+            nn.Linear(embed_dim, embed_dim // 2),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(embed_dim // 2, embed_dim // 4),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(embed_dim // 4, (self.hparams.size // 16) ** 2)
         )
-    # 
+
     def forward(self, x):
         features = self.encoder(x)  # BaseModelOutput
         tokens = features.last_hidden_state  # (B, N, D)
 
-        # # Optionally, flatten tokens for Linear classifier
-        # B, N, D = tokens.shape
-        # x_flat = tokens.mean(dim=1)  # simple: mean pooling over patches
-        # # now x_flat shape: (B, D)
-
-        # # pass to classifier
-        # out = self.classifier(x_flat)
-        # out = out.view(-1, 1, self.hparams.size // 8, self.hparams.size // 8)
-        # return out
         cls = tokens[:, 0]   
         out = self.classifier(cls)
         out = out.view(-1, 1, self.hparams.size // 16, self.hparams.size // 16)

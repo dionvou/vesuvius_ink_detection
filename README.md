@@ -188,42 +188,95 @@ fragment_id/
 ```
 ## Quick Start
 
-### Training SWIN Transformer (Recommended)
+### Training with Unified Script (Recommended)
+
+The project now includes a unified training script ([train.py](train.py)) with command-line argument support for easy experimentation. Use the provided [run.sh](run.sh) script to launch training:
 
 ```bash
-python swin_train.py
+# Make the script executable
+chmod +x run.sh
+
+# Run training with default configuration
+./run.sh
 ```
 
-Configuration is controlled via the `CFG` class at the top of the file:
-
-```python
-class CFG:
-    # Data settings
-    segments = ['frag5', 's4']      # Training fragments
-    valid_id = 'frag5'               # Validation fragment
-
-    # Input configuration
-    start_idx = 22                   # First layer index
-    in_chans = 18                    # Number of input channels
-    valid_chans = 16                 # Channels for validation
-    size = 224                       # Spatial resolution
-
-    # Training hyperparameters
-    train_batch_size = 5
-    valid_batch_size = 10
-    lr = 5e-5
-    epochs = 4
-    scheduler = 'cosine'
-```
-
-### Other Model Training
+The [run.sh](run.sh) script trains a SWIN Transformer model with the following default configuration:
 
 ```bash
-# TimeSformer
-python timesformer_hug_train.py
+python train.py \
+  --model swin \
+  --segments Frag5 s4 \
+  --valid_id Frag5 \
+  --start_idx 24 \
+  --in_chans 16 \
+  --valid_chans 16 \
+  --size 224 \
+  --tile_size 224 \
+  --stride_divisor 8 \
+  --train_batch_size 2 \
+  --valid_batch_size 2 \
+  --lr 5e-5 \
+  --epochs 40 \
+  --scheduler cosine \
+  --weight_decay 1e-6 \
+  --warmup_factor 10 \
+  --norm true \
+  --aug fourth \
+  --num_workers 8 \
+  --seed 0 \
+  --max_grad_norm 1.0 \
+  --devices -1 \
+  --strategy ddp_find_unused_parameters_true
+```
 
-# 3D ResNet
-python train_resnet3d.py
+### Training with Custom Configuration
+
+You can customize training by modifying [run.sh](run.sh) or calling [train.py](train.py) directly:
+
+```bash
+# Example: Train VideoMAE on different fragments
+python train.py \
+  --model vmae \
+  --segments Frag1 Frag5 \
+  --valid_id Frag1 \
+  --in_chans 24 \
+  --size 64 \
+  --epochs 50 \
+  --lr 1e-4
+
+# Example: Train with higher resolution
+python train.py \
+  --model swin \
+  --size 448 \
+  --tile_size 448 \
+  --train_batch_size 1
+```
+
+### Available Arguments
+
+Key command-line arguments for [train.py](train.py):
+
+- **Model**: `--model` (choices: swin, vmae, timesformer_hug, resnet)
+- **Data**: `--segments` (training fragments), `--valid_id` (validation fragment)
+- **Input**: `--start_idx` (first layer), `--in_chans` (number of channels)
+- **Resolution**: `--size` (input size), `--tile_size` (tile size)
+- **Training**: `--train_batch_size`, `--lr`, `--epochs`, `--scheduler`
+- **Augmentation**: `--aug` (choices: none, fourth)
+- **Distributed**: `--devices` (GPU count), `--strategy` (DDP strategy)
+
+### Legacy Training Scripts
+
+Individual training scripts are still available in [train_scripts/](train_scripts/):
+
+```bash
+# SWIN Transformer (legacy)
+python train_scripts/swin_train.py
+
+# TimeSformer (legacy)
+python train_scripts/timesformer_hug_train.py
+
+# 3D ResNet (legacy)
+python train_scripts/train_resnet3d.py
 
 # Cross-validation experiments
 python z_cv.py

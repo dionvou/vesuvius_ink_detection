@@ -186,15 +186,29 @@ download_aux_files () {
 #     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
 # done
 
+# # Scroll 3
+# fragments2=("20240304144031" "20240304141531")
+# extensions2=(tif png jpg)
 
-# Scroll 3 segment big
-fragments2=("20240712074250")
+# for frag in "${fragments2[@]}"; do
+
+#     # Base URL for Scroll 4, specific path/segmentation
+#     base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/${frag}"
+#     layers_url="${base_url}/layers/"
+#     out_dir="./train_scrolls/${frag}/layers/"
+
+#     # Download layers 15-45 and auxiliary files (mask, inklabels)
+#     download_layers "$layers_url" "$out_dir" 15 45 extensions2[@]
+#     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
+# done
+
+fragments2=("frag5")
 extensions2=(tif png jpg)
 
 for frag in "${fragments2[@]}"; do
 
     # Base URL for Scroll 4, specific path/segmentation
-    base_url="https://dl.ash2txt.org/full-scrolls/Scroll3/PHerc332.volpkg/paths/20240712074250/"
+    base_url="https://dl.ash2txt.org/community-uploads/jrudolph/rescaled-fragments/train_scrolls/Frag5"
     layers_url="${base_url}/layers/"
     out_dir="./train_scrolls/${frag}/layers/"
 

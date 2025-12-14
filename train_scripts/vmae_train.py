@@ -25,16 +25,16 @@ class CFG:
     current_dir = './'
     segment_path = './train_scrolls/'
     
-    start_idx = 24
-    in_chans = 16
-    valid_chans = 16
+    start_idx = 28
+    in_chans = 8
+    valid_chans = 8
     
     size = 64
-    tile_size = 64
-    stride = tile_size // 4
+    tile_size = 128
+    stride = tile_size // 8
 
-    train_batch_size = 50
-    valid_batch_size = 50   
+    train_batch_size = 60
+    valid_batch_size = 512
     lr = 5e-5
     # ============== model cfg =============
     scheduler = 'cosine'
@@ -47,8 +47,8 @@ class CFG:
     ratio2 = 2
     
     # ============== fold =============
-    segments = ['20231210132040','Frag5']#['Frag5','20231210132040']#,'frag4','frag3','frag2','frag1']
-    valid_id = '20231210132040'#20231210132040'20231215151901
+    segments = ['20240304144031','Frag5']#['Frag5','20231210132040']#,'frag4','frag3','frag2','frag1']
+    valid_id = '20240304144031'#20231210132040'20231215151901
     norm = True
     aug = None
     # ============== fixed =============
@@ -69,18 +69,40 @@ class CFG:
         
     # ============== augmentation =============
     train_aug_list = [
+        # A.HorizontalFlip(p=0.5),
+        # A.VerticalFlip(p=0.5),
+        # A.RandomBrightnessContrast(p=0.75),
+        # A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.,p=0.75),
+        # # A.OneOf([
+        # #         A.GaussNoise(var_limit=[10, 50]),
+        # #         # A.GaussianBlur(),
+        # #         # A.MotionBlur(),
+        # #         ], p=0.4),
+        # A.CoarseDropout(max_holes=5, max_width=int(size * 0.1), max_height=int(size * 0.2), 
+        #                 mask_fill_value=0, p=0.5),
+        # ToTensorV2(transpose_mask=True),
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
-        A.RandomBrightnessContrast(p=0.75),
-        A.ShiftScaleRotate(rotate_limit=360,shift_limit=0.15,scale_limit=0.1,p=0.75),
-        A.OneOf([
-                A.GaussNoise(var_limit=[10, 50]),
-                A.GaussianBlur(),
-                A.MotionBlur(),
-                ], p=0.4),
-        A.CoarseDropout(max_holes=5, max_width=int(size * 0.1), max_height=int(size * 0.2), 
-                        mask_fill_value=0, p=0.5),
+
+        A.RandomBrightnessContrast(
+            brightness_limit=0.1,
+            contrast_limit=0.1,
+            p=0.5
+        ),
+
+        A.Rotate(limit=15, border_mode=cv2.BORDER_CONSTANT, p=0.7),
+
+        A.ShiftScaleRotate(
+            shift_limit=0.05,
+            scale_limit=0.0,
+            rotate_limit=15,
+            border_mode=cv2.BORDER_CONSTANT,
+            p=0.7
+        ),
+
+        A.GaussNoise(var_limit=(3, 10), p=0.3),   # VERY mild noise only
         ToTensorV2(transpose_mask=True),
+
     ]
 
     valid_aug_list = [
@@ -117,9 +139,6 @@ elif any(sub in fragment_id for sub in CFG.frags_ratio2):
     new_h = int(valid_mask_gt.shape[0] * scale)
     valid_mask_gt = cv2.resize(valid_mask_gt, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-pad0 = (CFG.size - valid_mask_gt.shape[0] % CFG.size) % CFG.size
-pad1 = (CFG.size - valid_mask_gt.shape[1] % CFG.size) % CFG.size
-valid_mask_gt = np.pad(valid_mask_gt, [(0, pad0), (0, pad1)], constant_values=0)
 pred_shape=valid_mask_gt.shape
 
 train_images, train_masks, valid_images, valid_masks, valid_xyxys = utils.get_train_valid_dataset(CFG)
@@ -129,7 +148,7 @@ print("Length of train images:", len(train_images))
 
 valid_xyxys = np.stack(valid_xyxys)
 train_dataset = utils.VideoDataset(
-    train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG),norm=True, aug='fourth',scale_factor=16)
+    train_images, CFG, labels=train_masks, transform=get_transforms(data='train', cfg=CFG),norm=True, aug=None,scale_factor=16)
 valid_dataset = utils.VideoDataset(
     valid_images, CFG, xyxys=valid_xyxys, labels=valid_masks, transform=get_transforms(data='valid', cfg=CFG),norm=True,scale_factor=16)
 
