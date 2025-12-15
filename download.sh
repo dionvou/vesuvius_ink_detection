@@ -97,94 +97,62 @@ download_aux_files () {
     done
 }
 
-# # ================================
-# # First batch: Fragment downloads
-# # ================================
-# # Download individual papyrus fragments with known ink labels for training
+# ================================
+# First batch: Fragment downloads
+# ================================
+# Download individual papyrus fragments with known ink labels for training
 
-# # Fragment 1: PHercParis2Fr47 scanned at 54keV with 3.24um resolution
-# fragments=("Frag1")
-# extensions1=(tif png)
+# Fragment 1: PHercParis2Fr47 scanned at 54keV with 3.24um resolution
+fragments=("Frag1")
+extensions1=(tif png)
 
-# for frag in "${fragments[@]}"; do
-#     # Base URL for Fragment 1 data
-#     base_url="https://dl.ash2txt.org/fragments/Frag1/PHercParis2Fr47.volpkg/working/54keV_exposed_surface"
-#     layers_url="${base_url}/surface_volume/"
-#     out_dir="./train_scrolls/${frag}/layers/"
+for frag in "${fragments[@]}"; do
+    # Base URL for Fragment 1 data
+    base_url="https://dl.ash2txt.org/fragments/Frag1/PHercParis2Fr47.volpkg/working/54keV_exposed_surface"
+    layers_url="${base_url}/surface_volume/"
+    out_dir="./train_scrolls/${frag}/layers/"
 
-#     # Download layers 15-45 and auxiliary files (mask, inklabels)
-#     download_layers "$layers_url" "$out_dir" 15 45 extensions1[@]
-#     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
-# done
+    # Download layers 15-45 and auxiliary files (mask, inklabels)
+    download_layers "$layers_url" "$out_dir" 15 45 extensions1[@]
+    download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
+done
 
-# # Fragment 5: PHerc1667Cr1Fr3 scanned at 70keV with 3.24um resolution
-# fragments=("Frag5")
-# extensions1=(tif png)
-# for frag in "${fragments[@]}"; do
+# Fragment 5: PHerc1667Cr1Fr3 scanned at 70keV with 3.24um resolution
+fragments=("Frag5")
+extensions1=(tif png)
+for frag in "${fragments[@]}"; do
 
-#     # Base URL for Fragment 5 data
-#     base_url="https://dl.ash2txt.org/fragments/Frag5/PHerc1667Cr1Fr3.volpkg/working/PHerc1667Cr01Fr03_70keV_3.24um/surface_processing"
-#     layers_url="${base_url}/surface_volume/"
-#     out_dir="./train_scrolls/${frag}/layers/"
+    # Base URL for Fragment 5 data
+    base_url="https://dl.ash2txt.org/fragments/Frag5/PHerc1667Cr1Fr3.volpkg/working/PHerc1667Cr01Fr03_70keV_3.24um/surface_processing"
+    layers_url="${base_url}/surface_volume/"
+    out_dir="./train_scrolls/${frag}/layers/"
 
-#     # Download layers 15-45 and auxiliary files (mask, inklabels)
-#     download_layers "$layers_url" "$out_dir" 15 45 extensions1[@]
-#     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
-# done
+    # Download layers 15-45 and auxiliary files (mask, inklabels)
+    download_layers "$layers_url" "$out_dir" 15 45 extensions1[@]
+    download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
+done
 
-# # ================================
-# # Second batch: Full scroll downloads
-# # ================================
-# # Download full scroll data (Scroll 4 - PHerc1667)
-# # These are larger intact scrolls rather than small fragments
+# ================================
+# Second batch: Full scroll downloads
+# ================================
+# Download full scroll data (Scroll 4 - PHerc1667)
+# These are larger intact scrolls rather than small fragments
 
-# # Scroll 4 segment
-# fragments2=("20231210132040")
-# extensions2=(tif png jpg)
+# Scroll 4 segment
+fragments2=("20231210132040")
+extensions2=(tif png jpg)
 
-# for frag in "${fragments2[@]}"; do
+for frag in "${fragments2[@]}"; do
 
-#     # Base URL for Scroll 4, specific path/segmentation
-#     base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/${frag}"
-#     layers_url="${base_url}/layers/"
-#     out_dir="./train_scrolls/${frag}/layers/"
+    # Base URL for Scroll 4, specific path/segmentation
+    base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/${frag}"
+    layers_url="${base_url}/layers/"
+    out_dir="./train_scrolls/${frag}/layers/"
 
-#     # Download layers 15-45 and auxiliary files (mask, inklabels)
-#     download_layers "$layers_url" "$out_dir" 15 45 extensions2[@]
-#     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
-# done
-
-# # Scroll 4 segment big
-# fragments2=("big20231210132040")
-# extensions2=(tif png jpg)
-
-# for frag in "${fragments2[@]}"; do
-
-#     # Base URL for Scroll 4, specific path/segmentation
-#     base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/20231210132040/render_3.24um_20231107190228/"
-#     layers_url="${base_url}/layers_jpg/"
-#     out_dir="./train_scrolls/${frag}/layers/"
-
-#     # Download layers 15-45 and auxiliary files (mask, inklabels)
-#     download_layers "$layers_url" "$out_dir" 15 45 extensions2[@]
-#     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
-# done
-
-# # Scroll 4 segment 
-# fragments2=("20240304141530")
-# extensions2=(tif png jpg)
-
-# for frag in "${fragments2[@]}"; do
-
-#     # Base URL for Scroll 4, specific path/segmentation
-#     base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/paths/20240304141530/"
-#     layers_url="${base_url}/layers/"
-#     out_dir="./train_scrolls/${frag}/layers/"
-
-#     # Download layers 15-45 and auxiliary files (mask, inklabels)
-#     download_layers "$layers_url" "$out_dir" 15 45 extensions2[@]
-#     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
-# done
+    # Download layers 15-45 and auxiliary files (mask, inklabels)
+    download_layers "$layers_url" "$out_dir" 15 45 extensions2[@]
+    download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
+done
 
 # # Scroll 3
 # fragments2=("20240304144031" "20240304141531")
@@ -202,17 +170,32 @@ download_aux_files () {
 #     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
 # done
 
-fragments2=("frag5")
-extensions2=(tif png jpg)
+# fragments2=("frag5")
+# extensions2=(tif png jpg)
 
-for frag in "${fragments2[@]}"; do
+# for frag in "${fragments2[@]}"; do
 
-    # Base URL for Scroll 4, specific path/segmentation
-    base_url="https://dl.ash2txt.org/community-uploads/jrudolph/rescaled-fragments/train_scrolls/Frag5"
-    layers_url="${base_url}/layers/"
-    out_dir="./train_scrolls/${frag}/layers/"
+#     # Base URL for Scroll 4, specific path/segmentation
+#     base_url="https://dl.ash2txt.org/community-uploads/jrudolph/rescaled-fragments/train_scrolls/Frag5"
+#     layers_url="${base_url}/layers/"
+#     out_dir="./train_scrolls/${frag}/layers/"
 
-    # Download layers 15-45 and auxiliary files (mask, inklabels)
-    download_layers "$layers_url" "$out_dir" 15 45 extensions2[@]
-    download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
-done
+#     # Download layers 15-45 and auxiliary files (mask, inklabels)
+#     download_layers "$layers_url" "$out_dir" 15 45 extensions2[@]
+#     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
+# done
+
+# fragments2=("flatboi3")
+# extensions2=(tif png jpg)
+
+# for frag in "${fragments2[@]}"; do
+
+#     # Base URL for Scroll 4, specific path/segmentation
+#     base_url="https://dl.ash2txt.org/full-scrolls/Scroll4/PHerc1667.volpkg/thaumato_outputs/scroll4_thaumato_mar17/working/working_mesh_0_window_78488_118488_flatboi_3"
+#     layers_url="${base_url}/layers/"
+#     out_dir="./train_scrolls/${frag}/layers/"
+
+#     # Download layers 15-45 and auxiliary files (mask, inklabels)
+#     download_layers "$layers_url" "$out_dir" 15 45 extensions2[@]
+#     download_aux_files "$base_url" "$frag" "./train_scrolls/${frag}/"
+# done

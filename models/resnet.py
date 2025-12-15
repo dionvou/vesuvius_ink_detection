@@ -9,6 +9,8 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import segmentation_models_pytorch as smp
 from torch.optim import AdamW
+from models.resnetall import generate_model
+
 
 import utils
 
@@ -166,119 +168,138 @@ class RegressionPLModel(pl.LightningModule):
         return {"loss": loss}
 
     def on_validation_epoch_end(self):
-        """Calculate and log validation metrics at the end of each epoch."""
-        # Average overlapping predictions
-        self.mask_pred = np.divide(
-            self.mask_pred,
-            self.mask_count,
-            out=np.zeros_like(self.mask_pred),
-            where=self.mask_count != 0
-        )
+        mask_pred_tensor = torch.tensor(self.mask_pred, dtype=torch.float32, device=self.device)
+        mask_count_tensor = torch.tensor(self.mask_count, dtype=torch.float32, device=self.device)
 
-        pred_binary = (self.mask_pred > 0.5).astype(np.float32)
-
-        # Calculate metrics
-        if hasattr(self, 'mask_gt'):
-            gt_binary = self.mask_gt.astype(np.float32)
-
-            # Intersection and Union for IoU
-            intersection = np.logical_and(pred_binary, gt_binary).sum()
-            union = np.logical_or(pred_binary, gt_binary).sum()
-            iou = intersection / (union + 1e-8)
-
-            # Dice coefficient
-            dice = (2 * intersection) / (pred_binary.sum() + gt_binary.sum() + 1e-8)
-
-            # Pixel accuracy
-            correct = (pred_binary == gt_binary).sum()
-            total = gt_binary.size
-            pixel_acc = correct / total
-
-            # Precision and Recall
-            tp = np.logical_and(pred_binary == 1, gt_binary == 1).sum()
-            fp = np.logical_and(pred_binary == 1, gt_binary == 0).sum()
-            fn = np.logical_and(pred_binary == 0, gt_binary == 1).sum()
-
-            precision = tp / (tp + fp + 1e-8)
-            recall = tp / (tp + fn + 1e-8)
-            f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
-
-            # Log metrics
-            self.log("val/iou", iou, prog_bar=True, sync_dist=True)
-            self.log("val/dice", dice, prog_bar=True, sync_dist=True)
-            self.log("val/pixel_acc", pixel_acc, prog_bar=True, sync_dist=True)
-            self.log("val/precision", precision, sync_dist=True)
-            self.log("val/recall", recall, sync_dist=True)
-            self.log("val/f1", f1, sync_dist=True)
-
-            # Print only on master process
-            if self.trainer.is_global_zero:
-                print(f"\n=== Validation Metrics ===")
-                print(f"IoU: {iou:.4f}")
-                print(f"Dice: {dice:.4f}")
-                print(f"Pixel Accuracy: {pixel_acc:.4f}")
-                print(f"Precision: {precision:.4f}")
-                print(f"Recall: {recall:.4f}")
-                print(f"F1 Score: {f1:.4f}")
-
-        # Save metrics locally per experiment
         if self.trainer.is_global_zero:
-            exp_dir = os.path.join(self.trainer.default_root_dir, "metrics")
-            os.makedirs(exp_dir, exist_ok=True)
+            mask_pred_np = mask_pred_tensor.cpu().numpy()
+            mask_count_np = mask_count_tensor.cpu().numpy()
+            final_mask = np.divide(
+                mask_pred_np,
+                mask_count_np,
+                out=np.zeros_like(mask_pred_np),
+                where=mask_count_np != 0
+            )
 
-            csv_path = os.path.join(exp_dir, "metrics.csv")
-            file_exists = os.path.isfile(csv_path)
+            self.hparams.wandb_logger.log_image(key="masks", images=[np.clip(final_mask, 0, 1)], caption=["probs"])
 
-            with open(csv_path, "a", newline="") as f:
-                writer = csv.writer(f)
-
-                if not file_exists:
-                    writer.writerow([
-                        "timestamp",
-                        "epoch",
-                        "iou",
-                        "dice",
-                        "pixel_acc",
-                        "precision",
-                        "recall",
-                        "f1"
-                    ])
-
-                writer.writerow([
-                    datetime.now().isoformat(),
-                    self.current_epoch,
-                    float(iou),
-                    float(dice),
-                    float(pixel_acc),
-                    float(precision),
-                    float(recall),
-                    float(f1)
-                ])
-
-        # Log image only on master process
-        if self.trainer.is_global_zero:
-            wandb_logger.log_image(key="masks", images=[np.clip(self.mask_pred, 0, 1)], caption=["probs"])
-
-        # Reset masks
         self.mask_pred = np.zeros(self.hparams.pred_shape)
         self.mask_count = np.zeros(self.hparams.pred_shape)
-        if hasattr(self, 'mask_gt'):
-            self.mask_gt = np.zeros(self.hparams.pred_shape)
+
+    # def on_validation_epoch_end(self):
+    #     """Calculate and log validation metrics at the end of each epoch."""
+    #     # Average overlapping predictions
+    #     self.mask_pred = np.divide(
+    #         self.mask_pred,
+    #         self.mask_count,
+    #         out=np.zeros_like(self.mask_pred),
+    #         where=self.mask_count != 0
+    #     )
+
+    #     pred_binary = (self.mask_pred > 0.5).astype(np.float32)
+
+    #     # Calculate metrics
+    #     if hasattr(self, 'mask_gt'):
+    #         gt_binary = self.mask_gt.astype(np.float32)
+
+    #         # Intersection and Union for IoU
+    #         intersection = np.logical_and(pred_binary, gt_binary).sum()
+    #         union = np.logical_or(pred_binary, gt_binary).sum()
+    #         iou = intersection / (union + 1e-8)
+
+    #         # Dice coefficient
+    #         dice = (2 * intersection) / (pred_binary.sum() + gt_binary.sum() + 1e-8)
+
+    #         # Pixel accuracy
+    #         correct = (pred_binary == gt_binary).sum()
+    #         total = gt_binary.size
+    #         pixel_acc = correct / total
+
+    #         # Precision and Recall
+    #         tp = np.logical_and(pred_binary == 1, gt_binary == 1).sum()
+    #         fp = np.logical_and(pred_binary == 1, gt_binary == 0).sum()
+    #         fn = np.logical_and(pred_binary == 0, gt_binary == 1).sum()
+
+    #         precision = tp / (tp + fp + 1e-8)
+    #         recall = tp / (tp + fn + 1e-8)
+    #         f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
+
+    #         # Log metrics
+    #         self.log("val/iou", iou, prog_bar=True, sync_dist=True)
+    #         self.log("val/dice", dice, prog_bar=True, sync_dist=True)
+    #         self.log("val/pixel_acc", pixel_acc, prog_bar=True, sync_dist=True)
+    #         self.log("val/precision", precision, sync_dist=True)
+    #         self.log("val/recall", recall, sync_dist=True)
+    #         self.log("val/f1", f1, sync_dist=True)
+
+    #         # Print only on master process
+    #         if self.trainer.is_global_zero:
+    #             print(f"\n=== Validation Metrics ===")
+    #             print(f"IoU: {iou:.4f}")
+    #             print(f"Dice: {dice:.4f}")
+    #             print(f"Pixel Accuracy: {pixel_acc:.4f}")
+    #             print(f"Precision: {precision:.4f}")
+    #             print(f"Recall: {recall:.4f}")
+    #             print(f"F1 Score: {f1:.4f}")
+
+    #     # Save metrics locally per experiment
+    #     if self.trainer.is_global_zero:
+    #         exp_dir = os.path.join(self.trainer.default_root_dir, "metrics")
+    #         os.makedirs(exp_dir, exist_ok=True)
+
+    #         csv_path = os.path.join(exp_dir, "metrics.csv")
+    #         file_exists = os.path.isfile(csv_path)
+
+    #         with open(csv_path, "a", newline="") as f:
+    #             writer = csv.writer(f)
+
+    #             if not file_exists:
+    #                 writer.writerow([
+    #                     "timestamp",
+    #                     "epoch",
+    #                     "iou",
+    #                     "dice",
+    #                     "pixel_acc",
+    #                     "precision",
+    #                     "recall",
+    #                     "f1"
+    #                 ])
+
+    #             writer.writerow([
+    #                 datetime.now().isoformat(),
+    #                 self.current_epoch,
+    #                 float(iou),
+    #                 float(dice),
+    #                 float(pixel_acc),
+    #                 float(precision),
+    #                 float(recall),
+    #                 float(f1)
+    #             ])
+
+    #     # Log image only on master process
+    #     if self.trainer.is_global_zero:
+    #         wandb_logger.log_image(key="masks", images=[np.clip(self.mask_pred, 0, 1)], caption=["probs"])
+
+    #     # Reset masks
+    #     self.mask_pred = np.zeros(self.hparams.pred_shape)
+    #     self.mask_count = np.zeros(self.hparams.pred_shape)
+    #     if hasattr(self, 'mask_gt'):
+    #         self.mask_gt = np.zeros(self.hparams.pred_shape)
                 
     def configure_optimizers(self):
-        """Configure optimizer and learning rate scheduler."""
-        base_lr = CFG.lr
-        param_groups = [
-            {'params': self.backbone.parameters(), 'lr': base_lr, 'weight_decay': 5e-3},
-            {'params': self.decoder.parameters(), 'lr': base_lr, 'weight_decay': 5e-3},
-        ]
+        weight_decay = 0.
+        base_lr = self.hparams.lr
 
-        optimizer = AdamW(param_groups)
+        # 1️⃣ Backbone parameters in their own group
+        backbone_params = list(self.parameters())
+
+        # 5 4Optimizer
+        optimizer = AdamW(backbone_params, lr=base_lr, weight_decay=weight_decay)
 
         # OneCycleLR scheduler
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
-            max_lr=[group['lr'] for group in param_groups],
+            max_lr=[base_lr],
             pct_start=0.35,
             steps_per_epoch=143,
             epochs=25,

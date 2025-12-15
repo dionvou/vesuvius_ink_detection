@@ -9,7 +9,7 @@ This project implements state-of-the-art computer vision models to identify ink 
 ### Key Features
 
 - **Multiple Model Architectures**: SWIN Transformer, VideoMAE, TimeSformer, 3D ResNet
-- **Self-Supervised Pretraining**: MAE, VideoMAE, JEPA for learning from unlabeled scroll data
+- **Self-Supervised Pretraining**: VideoMAE for learning from unlabeled scroll data
 - **Multi-Fragment Training**: Combines data from multiple scroll fragments for robust learning
 - **Advanced Augmentation**: Spatial, intensity, and channel-level augmentations
 - **Experiment Tracking**: Full integration with Weights & Biases
@@ -28,10 +28,9 @@ vesuvius_ink_detection/
 │
 ├── pretraining/                 # Self-supervised pretraining
 │   ├── mae.py                  # VideoMAE pretraining
-│   ├── jepa.py                 # Joint Embedding Predictive Architecture
 │   ├── mae_swin.py             # MAE for SWIN
 │   ├── prepare_data.py         # Tile extraction for pretraining
-│   └── training_history_*.csv  # Training logs
+│   └── download.sh             # Download pretraining segments
 │
 ├── train_scripts/               # Training utilities
 │   ├── vmae_train.py           # VideoMAE training wrapper
@@ -188,9 +187,9 @@ fragment_id/
 ```
 ## Quick Start
 
-### Training with Unified Script (Recommended)
+### Training with Unified Script
 
-The project now includes a unified training script ([train.py](train.py)) with command-line argument support for easy experimentation. Use the provided [run.sh](run.sh) script to launch training:
+The project includes a unified training script ([train.py](train.py)) with command-line argument support for easy experimentation. Use the provided [run.sh](run.sh) script to launch training:
 
 ```bash
 # Make the script executable
@@ -205,6 +204,7 @@ The [run.sh](run.sh) script trains a SWIN Transformer model with the following d
 ```bash
 python train.py \
   --model swin \
+  --segment_path ./train_scrolls/ \
   --segments Frag5 s4 \
   --valid_id Frag5 \
   --start_idx 24 \
@@ -225,6 +225,9 @@ python train.py \
   --num_workers 8 \
   --seed 0 \
   --max_grad_norm 1.0 \
+  --comp_name vesuvius \
+  --wandb_project vesuvius \
+  --save_top_k -1 \
   --devices -1 \
   --strategy ddp_find_unused_parameters_true
 ```
@@ -257,12 +260,14 @@ python train.py \
 Key command-line arguments for [train.py](train.py):
 
 - **Model**: `--model` (choices: swin, vmae, timesformer_hug, resnet)
-- **Data**: `--segments` (training fragments), `--valid_id` (validation fragment)
-- **Input**: `--start_idx` (first layer), `--in_chans` (number of channels)
-- **Resolution**: `--size` (input size), `--tile_size` (tile size)
-- **Training**: `--train_batch_size`, `--lr`, `--epochs`, `--scheduler`
-- **Augmentation**: `--aug` (choices: none, fourth)
-- **Distributed**: `--devices` (GPU count), `--strategy` (DDP strategy)
+- **Data**: `--segment_path` (path to training scrolls), `--segments` (training fragments), `--valid_id` (validation fragment)
+- **Input**: `--start_idx` (first layer), `--in_chans` (number of channels), `--valid_chans` (validation channels)
+- **Resolution**: `--size` (input size), `--tile_size` (tile size), `--stride_divisor` (stride calculation)
+- **Training**: `--train_batch_size`, `--valid_batch_size`, `--lr`, `--min_lr`, `--epochs`, `--scheduler`, `--weight_decay`, `--warmup_factor`
+- **Augmentation**: `--aug` (choices: none, shift, fourth, None), `--norm` (apply normalization)
+- **Distributed**: `--devices` (GPU count), `--strategy` (DDP strategy), `--precision` (training precision)
+- **Output**: `--comp_name` (competition name), `--wandb_project` (W&B project name)
+- **Checkpoint**: `--checkpoint_path` (resume from checkpoint), `--save_top_k` (save top k models)
 
 ### Legacy Training Scripts
 
@@ -277,6 +282,9 @@ python train_scripts/timesformer_hug_train.py
 
 # 3D ResNet (legacy)
 python train_scripts/train_resnet3d.py
+
+# VideoMAE training
+python train_scripts/vmae_train.py
 
 # Cross-validation experiments
 python z_cv.py
@@ -400,7 +408,7 @@ A.OneOf([A.GaussNoise(), A.GaussianBlur(), A.MotionBlur()], p=0.4)
 A.CoarseDropout(max_holes=5, max_width=int(size*0.1), max_height=int(size*0.2))
 ```
 
-**Channel-level augmentation** ("fourth"): Random channel shuffling/removal for robustness.
+**Channel-level augmentation** ("fourth"): Random channel crops/removal for robustness.
 
 ## Checkpoint Naming Convention
 
@@ -419,19 +427,6 @@ This enables:
 - Easy checkpoint identification
 - Reproducible experiment tracking
 - Automated checkpoint selection
-
-## Cross-Validation
-
-Run k-fold cross-validation across fragments:
-
-```bash
-python z_cv.py
-```
-
-Features:
-- Multiple model backbones (ResNet3D, I3D, UNETR)
-- Fragment-level train/validation splits
-- Comprehensive evaluation metrics
 
 ## Pseudo-Labeling
 
@@ -484,16 +479,15 @@ ratio2 = 1  # No scaling
 ### Model Checkpoints
 
 ```
-outputs/vesuvius/pretraining_all/vesuvius-models/
+outputs/models/
 └── SWIN_['frag5','s4']_valid=frag5_size=224_lr=2e-05_in_chans=16_norm=True_epoch=7.ckpt
 ```
 
 ### Predictions
 
 ```
-outputs/vesuvius/pretraining_all/
-└── predictions/
-    └── [fragment_id]_prediction.png
+wand/run/files/media/images
+    └── mask.png
 ```
 
 ## Utilities
@@ -532,11 +526,6 @@ size = 64  # Instead of 224
 # Enable gradient checkpointing (in model code)
 ```
 
-Or set environment variable:
-```bash
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-```
-
 ### Large Image Files
 
 Increase PIL limit (already done in training scripts):
@@ -568,14 +557,6 @@ wandb.init(mode='disabled')
 2. **VideoMAE**: Good for pretraining, requires fine-tuning
 3. **3D ResNet**: Lightweight alternative, faster training
 4. **TimeSformer**: Good temporal modeling, higher memory usage
-
-### Training Strategy
-
-1. **Pretrain** on unlabeled data (MAE/JEPA)
-2. **Fine-tune** on labeled fragments
-3. **Multi-fragment training** for robustness
-4. **Cross-validation** for model selection
-5. **Ensemble** multiple checkpoints for final predictions
 
 ### Hyperparameter Tuning
 
@@ -620,4 +601,4 @@ For questions or issues, please open a GitHub issue or contact voulgarakisdion@g
 
 **Last Updated**: 2025
 
-**Contributors**: 
+**Contributors**: Voulgarakis Dionysios, Pavlopoulos John

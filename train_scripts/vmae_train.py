@@ -42,13 +42,13 @@ class CFG:
     
     # Change the size of fragments2
     frags_ratio1 = ['Frag','re']
-    frags_ratio2 = ['s4','202','left']
+    frags_ratio2 = ['s4','202','flat']
     ratio1 = 2
     ratio2 = 2
     
     # ============== fold =============
-    segments = ['20240304144031','Frag5']#['Frag5','20231210132040']#,'frag4','frag3','frag2','frag1']
-    valid_id = '20240304144031'#20231210132040'20231215151901
+    segments = ['flatboi3','Frag5']
+    valid_id = 'flatboi3'#20231210132040'20231215151901
     norm = True
     aug = None
     # ============== fixed =============
@@ -125,8 +125,12 @@ torch.set_float32_matmul_precision('medium')
 
 fragment_id = CFG.valid_id
 run_slug=f'_VIDEOMAE_{CFG.segments}_valid={CFG.valid_id}_size={CFG.size}_lr={CFG.lr}_in_chans={CFG.valid_chans},norm={CFG.norm},fourth={CFG.aug}'
+path_tif = f"{CFG.segment_path}{fragment_id}/layers/32.tif"
+path_jpg = f"{CFG.segment_path}{fragment_id}/layers/32.jpg"
 
-valid_mask_gt = cv2.imread(f"{CFG.segment_path}{fragment_id}/layers/32.tif", 0)
+path = path_tif if os.path.exists(path_tif) else path_jpg
+valid_mask_gt = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+# valid_mask_gt = cv2.imread(f"{CFG.segment_path}{fragment_id}/layers/32.jpg", 0)
 if any(sub in fragment_id for sub in CFG.frags_ratio1):
     scale = 1 / CFG.ratio1
     new_w = int(valid_mask_gt.shape[1] * scale)

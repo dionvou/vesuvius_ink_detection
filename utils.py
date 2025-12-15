@@ -82,6 +82,8 @@ def read_image_mask(fragment_id, CFG=None):
 
     # Create the LUT
     lut = create_lut(control_points, bit_depth=8)
+
+    
     images = []
     start_idx = CFG.start_idx 
     end_idx = start_idx + CFG.in_chans
@@ -132,11 +134,11 @@ def read_image_mask(fragment_id, CFG=None):
             # pad1 = (CFG.size - image.shape[1] % CFG.size) % CFG.size
             # image = np.pad(image, [(0, pad0), (0, pad1)], constant_values=0)
            
-            # image=np.clip(image,0,200)
+            image=np.clip(image,0,200)
             images.append(image)
 
         images = np.stack(images, axis=2)
-        images = apply_lut_to_stack(images, lut)
+        # images = apply_lut_to_stack(images, lut)
         print(f" Shape of {fragment_id} segment: {images.shape}")
         # if fragment_id == '20231024093300':
         #     images=images[:,:,::-1]
