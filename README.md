@@ -1,6 +1,6 @@
 # Vesuvius Ink Detection
 
-Deep learning models for detecting ink on ancient Vesuvius scroll fragments using multi-channel volumetric CT scan data.
+Deep learning models for detecting ink on ancient Vesuvius scroll fragments.
 
 ## Overview
 
