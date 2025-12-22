@@ -1,5 +1,7 @@
 # Vesuvius Ink Detection
 
+## About
+
 Deep learning models for detecting ink on ancient Vesuvius scroll fragments.
 
 ## Overview
