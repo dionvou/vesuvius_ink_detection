@@ -12,8 +12,6 @@ This project implements state-of-the-art computer vision models to identify ink 
 
 - **Multiple Model Architectures**: SWIN Transformer, VideoMAE, TimeSformer, 3D ResNet
 - **Self-Supervised Pretraining**: VideoMAE for learning from unlabeled scroll data
-- **Multi-Fragment Training**: Combines data from multiple scroll fragments for robust learning
-- **Advanced Augmentation**: Spatial, intensity, and channel-level augmentations
 - **Experiment Tracking**: Full integration with Weights & Biases
 
 ## Project Structure
@@ -55,7 +53,6 @@ vesuvius_ink_detection/
 ├── checkpoints/                 # Saved model weights
 ├── outputs/                     # Predictions and results
 ├── notebooks/                   # Exploratory analysis
-└── pseudo/                      # Pseudo-labeling code
 ```
 
 ## Installation
@@ -288,8 +285,6 @@ python train_scripts/train_resnet3d.py
 # VideoMAE training
 python train_scripts/vmae_train.py
 
-# Cross-validation experiments
-python z_cv.py
 ```
 
 ## Model Architectures
@@ -331,13 +326,6 @@ ResNet extended to 3D convolutions.
 - **Pretrained**: r3d101_KM_200ep.pth (Kinetics-400)
 - **Training**: [train_resnet3d.py](train_resnet3d.py)
 
-### 5. I3D with Non-local Blocks ([models/i3dallnl.py](models/i3dallnl.py))
-
-Inception 3D with non-local attention operations.
-
-### 6. UNETR ([models/unetr.py](models/unetr.py))
-
-Transformer-based U-Net for hierarchical segmentation.
 
 ## Self-Supervised Pretraining
 
@@ -354,26 +342,6 @@ python mae.py
 - **Configuration**: 16-channel input, 16-24 frames
 - **Loss**: L1 norm pixel prediction
 - **Checkpoints**: `videomae_epoch=063_val_loss=0.3684.ckpt`
-
-### Joint Embedding Predictive Architecture (JEPA)
-
-```bash
-cd pretraining
-python jepa.py
-```
-
-- **Method**: Predict representations of masked regions (no pixel targets)
-- **Advantage**: Learns higher-level semantic features
-- **Configuration**: 64×64 input, 16 frames
-
-### Data Preparation for Pretraining
-
-```bash
-cd pretraining
-python prepare_data.py
-```
-
-Extracts 64×64 tiles with 50% stride from full scroll volumes.
 
 ## Training Infrastructure
 
@@ -397,21 +365,6 @@ wandb.init(project='vesuvius', name='experiment_name')
 
 View runs at: wandb.ai (requires login)
 
-### Data Augmentation
-
-Albumentations pipeline:
-
-```python
-A.HorizontalFlip(p=0.5)
-A.VerticalFlip(p=0.5)
-A.RandomBrightnessContrast(p=0.75)
-A.ShiftScaleRotate(rotate_limit=360, shift_limit=0.15, scale_limit=0.1, p=0.75)
-A.OneOf([A.GaussNoise(), A.GaussianBlur(), A.MotionBlur()], p=0.4)
-A.CoarseDropout(max_holes=5, max_width=int(size*0.1), max_height=int(size*0.2))
-```
-
-**Channel-level augmentation** ("fourth"): Random channel crops/removal for robustness.
-
 ## Checkpoint Naming Convention
 
 Checkpoints encode complete hyperparameter information:
@@ -429,20 +382,6 @@ This enables:
 - Easy checkpoint identification
 - Reproducible experiment tracking
 - Automated checkpoint selection
-
-## Pseudo-Labeling
-
-Generate soft pseudo-labels for semi-supervised learning:
-
-```bash
-python pseudo.py
-```
-
-Workflow:
-1. Train model on labeled fragments
-2. Generate predictions on unlabeled fragments
-3. Use high-confidence predictions as pseudo-labels
-4. Retrain with combined labeled + pseudo-labeled data
 
 ## Advanced Configuration
 
@@ -507,12 +446,6 @@ get_train_valid_dataset(segments, valid_id)
 cfg_init(CFG, mode='train')
 ```
 
-### Training Utilities ([train_scripts/utils.py](train_scripts/utils.py))
-
-Helper functions for:
-- Custom data loading
-- Metric computation
-- Checkpoint management
 
 ## Common Issues and Solutions
 
@@ -551,36 +484,6 @@ Or disable:
 wandb.init(mode='disabled')
 ```
 
-## Best Practices
-
-### Model Selection
-
-1. **SWIN Transformer**: Best overall performance, recommended starting point
-2. **VideoMAE**: Good for pretraining, requires fine-tuning
-3. **3D ResNet**: Lightweight alternative, faster training
-4. **TimeSformer**: Good temporal modeling, higher memory usage
-
-### Hyperparameter Tuning
-
-Recommended ranges:
-- **Learning rate**: 1e-5 to 5e-5
-- **Batch size**: 3-12 (depends on GPU memory)
-- **Input channels**: 16-24 (sweet spot for most fragments)
-- **Spatial size**: 224 (SWIN), 64 (VideoMAE pretraining)
-
-## Citation
-
-If you use this code in your research, please cite:
-
-```bibtex
-@misc{vesuvius-ink-detection,
-  title={Vesuvius Ink Detection},
-  author={[Author Names]},
-  year={2024},
-  howpublished={\url{https://github.com/[repository]}},
-}
-```
-
 ## License
 
 [Specify license]
@@ -589,8 +492,8 @@ If you use this code in your research, please cite:
 
 This repository is based on and adapted from the [villa ink-detection repository](https://github.com/ScrollPrize/villa/tree/main/ink-detection), which contains the **First Place Vesuvius Grand Prize solution**. The original repository is part of the First Place Grand Prize Submission to the Vesuvius Challenge 2023 from Youssef Nader, Luke Farritor, and Julian Schilliger.
 
-- Vesuvius Challenge organizers
-- Youssef Nader, Luke Farritor, and Julian Schilliger for their groundbreaking work
+- Vesuvius Challenge organizers.
+- Youssef Nader, Luke Farritor, and Julian Schilliger for their groundbreaking work.
 - AWS resources were provided by the National Infrastructures for Research and Technology GRNET and funded by the EU Recovery and Resiliency Facility.
 
 ## Contact
